@@ -151,6 +151,9 @@ kopia snapshot move-history \
 kopia snapshot move-history \
   backup@proton-backup-client:/data/proton \
   backup@jotta-backup-client:/data/jotta
+
+# Transfer maintenance ownership to the new identity
+kopia maintenance set --owner backup@jotta-backup-client
 ```
 
 #### Rollback
