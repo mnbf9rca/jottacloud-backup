@@ -70,6 +70,8 @@ S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
 
 Edit `kubernetes/cronjob.yaml` to adjust the schedule if needed (default: every 6 hours at :45 past).
 
+Create a Longhorn volume named `jottacloud-backup-config` (10Gi) via the Longhorn UI. This is used by the config PV to persist rclone and Kopia state across runs.
+
 ### 3. Create namespace and secrets
 
 ```bash
