@@ -33,8 +33,9 @@ Edit `kubernetes/configmap.yaml` for your environment:
 # Update these values:
 S3_ENDPOINT: "s3.us-west-000.backblazeb2.com" # Your B2 region
 S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
-BACKUP_SCHEDULE: "45 */6 * * *" # Every 6 hours at :45 past
 ```
+
+Edit `kubernetes/cronjob.yaml` to adjust the schedule if needed (default: every 6 hours at :45 past).
 
 ### 2. Create Namespace
 
@@ -46,7 +47,20 @@ kubectl apply -f kubernetes/pod-security-policy.yaml
 
 ```bash
 # Create rclone config locally first
-rclone config  # Choose jottacloud, complete the auth flow
+rclone config
+# n) New remote
+# name: jotta
+# type: jottacloud
+# auth type: standard (default)
+# Generate a personal login token from:
+#   Jottacloud web UI → Settings → Security → Personal Login Token
+# Paste the token when prompted
+# Non-default storage: y (to access Sync mountpoint)
+# Device: Jotta (default)
+# Mountpoint: Sync
+
+# Verify it works
+rclone lsd jotta:
 
 # Create secret with all credentials
 kubectl create secret generic jottacloud-backup-secrets \
@@ -58,7 +72,7 @@ kubectl create secret generic jottacloud-backup-secrets \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-> **Note:** Jottacloud uses OAuth tokens that rotate aggressively. Each container instance should use its own rclone config. If the PVC is lost, you will need to re-authenticate and generate a new login token.
+> **Note:** Jottacloud tokens rotate aggressively and only one session can be active per config. Each container instance must use its own rclone config — do not share configs between machines. If the config PVC is lost, you will need to generate a new personal login token from the Jottacloud web UI and re-run `rclone config`.
 
 ### 4. Deploy
 

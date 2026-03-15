@@ -2,14 +2,20 @@
 
 ## Setup rclone
 
-1. Install rclone v1.71.0+
+1. Install rclone (v1.71.0+)
 2. Configure rclone:
 ```bash
 rclone config
 # n) New remote
 # name: jotta
 # type: jottacloud
-# Follow the auth flow to obtain a login token
+# auth type: standard (default)
+# Generate a personal login token from:
+#   Jottacloud web UI → Settings → Security → Personal Login Token
+# Paste the token when prompted
+# Non-default storage: y (to access Sync mountpoint)
+# Device: Jotta (default)
+# Mountpoint: Sync
 ```
 
 ## Test Connection
@@ -51,5 +57,5 @@ docker run --rm -it \
 ## Common Issues
 
 - **"jottacloud not found"**: Update rclone to v1.71.0 or later
-- **"Token expired"**: Jottacloud tokens rotate aggressively; re-run `rclone config reconnect jotta:` to obtain a fresh token
+- **"Token expired"**: Jottacloud tokens rotate aggressively; generate a new personal login token from the web UI and re-run `rclone config reconnect jotta:`
 - **"Config file not found"**: Check RCLONE_CONFIG_FILE path
