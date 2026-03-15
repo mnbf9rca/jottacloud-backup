@@ -106,19 +106,16 @@ kubectl patch secret jottacloud-backup-secrets -n jottacloud-backup \
 
 You can skip step 3's `kubectl create secret` command if you do this.
 
-#### 4b. Remove the Proton deployment
+#### 4b. Stop the Proton deployment
 
-Delete all Proton K8s resources — the NFS data is preserved on the NFS server itself:
+Remove the CronJob and supporting resources, but keep secrets and configmap for rollback:
 
 ```bash
 kubectl delete cronjob proton-backup-scheduled -n proton-backup
-kubectl delete configmap proton-backup-config -n proton-backup
-kubectl delete secret proton-backup-secrets -n proton-backup
 kubectl delete serviceaccount proton-backup-sa -n proton-backup
 kubectl delete networkpolicy proton-backup-network-policy -n proton-backup
 kubectl delete pvc proton-backup-data-pvc proton-backup-config-pvc -n proton-backup
 kubectl delete pv proton-backup-data-pv proton-backup-config-pv
-kubectl delete namespace proton-backup
 ```
 
 #### 4c. Rename the NFS path
@@ -184,6 +181,14 @@ kubectl create job manual-backup-$(date +%s) \
 # Watch the logs
 kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) \
   -n jottacloud-backup
+```
+
+### 7. (Migration only) Clean up proton namespace
+
+Once the Jottacloud backup is running successfully, remove the remaining proton resources:
+
+```bash
+kubectl delete namespace proton-backup
 ```
 
 ## Configuration
