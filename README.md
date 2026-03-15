@@ -98,11 +98,10 @@ kubectl get secret proton-backup-secrets -n proton-backup -o json | \
   jq '.metadata = {name: "jottacloud-backup-secrets", namespace: "jottacloud-backup"}' | \
   kubectl apply -f -
 
-# Replace the rclone config with your jotta config
-kubectl create secret generic jottacloud-backup-secrets \
-  --namespace=jottacloud-backup \
-  --from-file=RCLONE_CONFIG=$HOME/.config/rclone/rclone.conf \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Patch just the rclone config key (keeps S3/Kopia credentials intact)
+RCLONE_B64=$(base64 < /tmp/jotta-rclone.conf)
+kubectl patch secret jottacloud-backup-secrets -n jottacloud-backup \
+  -p "{\"data\":{\"RCLONE_CONFIG\":\"$RCLONE_B64\"}}"
 ```
 
 You can skip step 3's `kubectl create secret` command if you do this.
