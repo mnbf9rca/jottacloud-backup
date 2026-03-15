@@ -155,8 +155,8 @@ log "Creating snapshot of $SNAPSHOT_SOURCE..."
 SNAPSHOT_START_TIME=$(date +%s)
 
 kopia snapshot create "$SNAPSHOT_SOURCE" \
-    --description="Proton Drive backup $(date -Iseconds)" \
-    --tags="source:proton-drive,automated:true"
+    --description="Jottacloud backup $(date -Iseconds)" \
+    --tags="source:jottacloud,automated:true"
 
 KOPIA_EXIT=$?
 
