@@ -88,7 +88,26 @@ kubectl create secret generic jottacloud-backup-secrets \
 
 If you are replacing an existing [proton-drive-backup](https://github.com/mnbf9rca/proton-drive-backup) deployment that shares the same Kopia repository and NFS storage:
 
-#### 4a. Remove the Proton deployment
+#### 4a. Copy secrets from proton
+
+Since both containers share the same B2 bucket and Kopia repo, copy the existing secret and replace the rclone config:
+
+```bash
+# Copy the proton secret to the new namespace (created by step 3)
+kubectl get secret proton-backup-secrets -n proton-backup -o json | \
+  jq '.metadata = {name: "jottacloud-backup-secrets", namespace: "jottacloud-backup"}' | \
+  kubectl apply -f -
+
+# Replace the rclone config with your jotta config
+kubectl create secret generic jottacloud-backup-secrets \
+  --namespace=jottacloud-backup \
+  --from-file=RCLONE_CONFIG=$HOME/.config/rclone/rclone.conf \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+You can skip step 3's `kubectl create secret` command if you do this.
+
+#### 4b. Remove the Proton deployment
 
 Delete all Proton K8s resources — the NFS data is preserved on the NFS server itself:
 
@@ -103,7 +122,7 @@ kubectl delete pv proton-backup-data-pv proton-backup-config-pv
 kubectl delete namespace proton-backup
 ```
 
-#### 4b. Rename the NFS path
+#### 4c. Rename the NFS path
 
 On your NFS server, rename the data directory to match the new PV path:
 
@@ -113,7 +132,7 @@ mv /tank/largeappdata/proton-drive /tank/largeappdata/jottacloud
 
 The first rclone sync will replace the old Proton files with Jottacloud files. Kopia's content-addressable dedup means any identical files between the two are not re-uploaded to B2.
 
-#### 4c. Move Kopia snapshot history
+#### 4d. Move Kopia snapshot history
 
 Re-parent existing snapshots to the new client identity. This rewrites snapshot manifests only — no data is re-uploaded. The S3/Kopia credentials are the same (shared B2 bucket and Kopia repo).
 
