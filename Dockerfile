@@ -1,9 +1,8 @@
-# Multi-stage build for secure Proton Drive backup container
+# Multi-stage build for secure Jottacloud backup container
 # Stage 1: Download and verify binaries
 FROM alpine:3.23.3 AS builder
 
 # Define versions for reproducible builds (checksums fetched dynamically)
-# Test comment to verify workflows trigger properly
 ARG RCLONE_VERSION=1.72.1
 ARG KOPIA_VERSION=0.22.3
 
@@ -119,26 +118,28 @@ USER backup
 # No exposed ports needed for CronJob operation
 
 # Add OCI labels with metadata
+ARG RCLONE_VERSION
+ARG KOPIA_VERSION
 ARG BUILD_DATE
 ARG VCS_REF
 ARG VERSION
-LABEL org.opencontainers.image.title="Proton Drive Backup" \
-      org.opencontainers.image.description="Secure container for backing up Proton Drive to Backblaze B2 using rclone and Kopia" \
+LABEL org.opencontainers.image.title="Jottacloud Backup" \
+      org.opencontainers.image.description="Secure container for backing up Jottacloud to Backblaze B2 using rclone and Kopia" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.vendor="Personal Project" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.base.name="alpine:3.22.1" \
-      com.example.rclone.version="1.71.0" \
-      com.example.kopia.version="0.21.1"
+      org.opencontainers.image.base.name="alpine:3.23.3" \
+      com.example.rclone.version="${RCLONE_VERSION}" \
+      com.example.kopia.version="${KOPIA_VERSION}"
 
 # Set build metadata as environment variables for script access
 ENV CONTAINER_BUILD_DATE="${BUILD_DATE}" \
     CONTAINER_VCS_REF="${VCS_REF}" \
     CONTAINER_VERSION="${VERSION}" \
-    CONTAINER_RCLONE_VERSION="1.71.0" \
-    CONTAINER_KOPIA_VERSION="0.21.1"
+    CONTAINER_RCLONE_VERSION="${RCLONE_VERSION}" \
+    CONTAINER_KOPIA_VERSION="${KOPIA_VERSION}"
 
 # Default command runs the backup script
 CMD ["/scripts/backup.sh"]

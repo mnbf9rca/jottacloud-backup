@@ -8,27 +8,27 @@
 
 ## How Container Signing Actually Works
 
-### The Build → Push → Sign Flow
+### The Build -> Push -> Sign Flow
 
 ```
-┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ 1. BUILD    │───▶│ 2. SCAN      │───▶│ 3. PUSH      │───▶│ 4. SIGN      │
-│             │    │              │    │              │    │              │
-│ Create      │    │ Vulnerability│    │ Upload to    │    │ Create       │
-│ container   │    │ scan with    │    │ registry     │    │ signature    │
-│ image       │    │ Trivy        │    │              │    │ for digest   │
-└─────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
-                                              │                     │
-                                              ▼                     │
-                                       ┌──────────────┐            │
-                                       │ Registry     │            │
-                                       │ assigns      │            │
-                                       │ content      │            │
-                                       │ digest:      │            │
-                                       │ sha256:abc.. │            │
-                                       └──────────────┘            │
-                                              │                     │
-                                              └─────────────────────┘
++--------------+    +--------------+    +--------------+    +--------------+
+| 1. BUILD     |--->| 2. SCAN      |--->| 3. PUSH      |--->| 4. SIGN      |
+|              |    |              |    |              |    |              |
+| Create       |    | Vulnerability|    | Upload to    |    | Create       |
+| container    |    | scan with    |    | registry     |    | signature    |
+| image        |    | Trivy        |    |              |    | for digest   |
++--------------+    +--------------+    +--------------+    +--------------+
+                                              |                     |
+                                              v                     |
+                                       +--------------+            |
+                                       | Registry     |            |
+                                       | assigns      |            |
+                                       | content      |            |
+                                       | digest:      |            |
+                                       | sha256:abc.. |            |
+                                       +--------------+            |
+                                              |                     |
+                                              +---------------------+
 ```
 
 ### Why This Order is Correct
@@ -41,31 +41,31 @@
 ## Registry Storage Model
 
 ```
-Registry (ghcr.io/user/proton-drive-backup)
-├── Manifests/
-│   ├── latest                           ← tag points to digest
-│   └── sha256:abc123...                 ← image manifest (layers, config)
-├── Blobs/
-│   ├── sha256:def456...                 ← image layers
-│   ├── sha256:ghi789...                 ← image config
-│   └── sha256:jkl012...                 ← more layers
-└── Signatures/
-    └── sha256-abc123.sig                ← signature for image digest
+Registry (ghcr.io/user/jottacloud-backup)
++-- Manifests/
+|   +-- latest                           <- tag points to digest
+|   +-- sha256:abc123...                 <- image manifest (layers, config)
++-- Blobs/
+|   +-- sha256:def456...                 <- image layers
+|   +-- sha256:ghi789...                 <- image config
+|   +-- sha256:jkl012...                 <- more layers
++-- Signatures/
+    +-- sha256-abc123.sig                <- signature for image digest
 ```
 
 ## What Gets Signed
 
 ```
 Image Digest: sha256:abc123def456...
-    ↓
-┌─────────────────────────────────────┐
-│ Cosign creates signature for:       │
-│ • Image digest (content hash)       │
-│ • Build metadata (who, when, how)   │
-│ • SBOM reference                    │
-│ • Provenance data                   │
-└─────────────────────────────────────┘
-    ↓
+    |
++-------------------------------------+
+| Cosign creates signature for:       |
+| - Image digest (content hash)       |
+| - Build metadata (who, when, how)   |
+| - SBOM reference                    |
+| - Provenance data                   |
++-------------------------------------+
+    |
 Signature stored as: sha256-abc123def456.sig
 ```
 
@@ -74,14 +74,14 @@ Signature stored as: sha256-abc123def456.sig
 When someone pulls the image:
 
 ```
-1. docker pull ghcr.io/user/proton-drive-backup:latest
-   ├─ Registry resolves tag → digest sha256:abc123...
-   └─ Downloads image layers
+1. docker pull ghcr.io/user/jottacloud-backup:latest
+   +- Registry resolves tag -> digest sha256:abc123...
+   +- Downloads image layers
 
-2. cosign verify ghcr.io/user/proton-drive-backup@sha256:abc123...
-   ├─ Looks for signature: sha256-abc123.sig
-   ├─ Verifies signature against public key/certificate
-   └─ Confirms image hasn't been tampered with
+2. cosign verify ghcr.io/user/jottacloud-backup@sha256:abc123...
+   +- Looks for signature: sha256-abc123.sig
+   +- Verifies signature against public key/certificate
+   +- Confirms image hasn't been tampered with
 ```
 
 ## Why Signatures "Travel With" the Image
@@ -95,7 +95,7 @@ The signature **does** travel with the image, just not as part of the image itse
 
 ## Security Benefits of This Design
 
-1. **Tamper Detection**: Any change to image → new digest → signature mismatch
+1. **Tamper Detection**: Any change to image -> new digest -> signature mismatch
 2. **Non-Repudiation**: Signature proves who built the image
 3. **Supply Chain**: Links image to specific build process and materials
 4. **Verification**: Anyone can verify without rebuilding
@@ -107,19 +107,19 @@ The signature **does** travel with the image, just not as part of the image itse
 - name: Build Docker image (without pushing)
   uses: docker/build-push-action@...
   with:
-    push: false          # ← Key: don't push yet
-    load: true           # ← Load for scanning
+    push: false          # <- Key: don't push yet
+    load: true           # <- Load for scanning
 
 # Scan the built image
 - name: Run Trivy vulnerability scanner
   with:
-    exit-code: 1         # ← Fail if vulnerabilities found
+    exit-code: 1         # <- Fail if vulnerabilities found
 
 # Only if scan passes, push to registry
 - name: Build and push multi-platform image
-  if: success()          # ← Only if previous steps passed
+  if: success()          # <- Only if previous steps passed
   with:
-    push: true           # ← Now we push
+    push: true           # <- Now we push
     # Registry assigns digest here
 
 # Sign using the digest from push step

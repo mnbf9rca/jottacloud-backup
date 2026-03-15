@@ -1,4 +1,4 @@
-name: Proton Drive Backup - Pull Request
+name: Jottacloud Backup - Pull Request
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/proton-drive-backup
+  IMAGE_NAME: ${{ github.repository_owner }}/jottacloud-backup
 
 jobs:
   build-and-scan:
@@ -80,13 +80,12 @@ jobs:
           cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: sarif
           output: trivy-results.sarif
           exit-code: 0
-          version: v0.68.2
 
       - name: Upload Trivy scan results to GitHub Security
         if: always() && hashFiles('trivy-results.sarif') != ''

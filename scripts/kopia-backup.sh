@@ -4,15 +4,10 @@
 set -e
 
 # Configuration - no defaults for critical paths to prevent masking config failures
-KOPIA_CONFIG_FILE="${KOPIA_CONFIG_FILE}"
-KOPIA_CACHE_DIR="${KOPIA_CACHE_DIR}"
-KOPIA_LOG_DIR="${KOPIA_LOG_DIR}"
-KOPIA_USERNAME="${KOPIA_USERNAME}"
-KOPIA_HOSTNAME="${KOPIA_HOSTNAME}"
-SOURCE_PATH="${SOURCE_PATH}"
+# Required from environment: KOPIA_CONFIG_FILE, KOPIA_CACHE_DIR, KOPIA_LOG_DIR,
+# KOPIA_USERNAME, KOPIA_HOSTNAME, SOURCE_PATH, KOPIA_PASSWORD
 REPOSITORY_PASSWORD="${KOPIA_PASSWORD}"
 S3_BUCKET="${S3_BUCKET:-${B2_BUCKET}}"
-S3_ENDPOINT="${S3_ENDPOINT}"
 S3_ACCESS_KEY="${S3_ACCESS_KEY:-${B2_ACCOUNT_ID}}"
 S3_SECRET_KEY="${S3_SECRET_KEY:-${B2_APPLICATION_KEY}}"
 S3_REGION="${S3_REGION:-us-west-000}"
@@ -155,8 +150,8 @@ log "Creating snapshot of $SNAPSHOT_SOURCE..."
 SNAPSHOT_START_TIME=$(date +%s)
 
 kopia snapshot create "$SNAPSHOT_SOURCE" \
-    --description="Proton Drive backup $(date -Iseconds)" \
-    --tags="source:proton-drive,automated:true"
+    --description="Jottacloud backup $(date -Iseconds)" \
+    --tags="source:jottacloud,automated:true"
 
 KOPIA_EXIT=$?
 

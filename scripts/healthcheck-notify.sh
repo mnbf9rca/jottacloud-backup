@@ -10,7 +10,7 @@ DURATION="${3:-0}"
 
 # Configuration
 HEALTHCHECK_BASE_URL="${HEALTHCHECK_URL}"
-HEALTHCHECK_UUID="${HEALTHCHECK_UUID}"
+# HEALTHCHECK_UUID is expected from environment
 MAX_PAYLOAD_SIZE=95000  # 95KB to stay under 100KB limit
 
 # Function to log with timestamp
@@ -40,7 +40,7 @@ HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -Iseconds)
 
 # Start building the message
-MESSAGE="Proton Drive Backup Report
+MESSAGE="Jottacloud Backup Report
 Status: $STATUS
 Exit Code: $EXIT_CODE
 Duration: ${DURATION}s
@@ -54,7 +54,7 @@ if [ -f "$LOG_FILE" ]; then
     log "Including log content (prioritizing errors and important info)"
 
     # Calculate how much space we have left for logs
-    MESSAGE_SIZE=$(echo "$MESSAGE" | wc -c)
+    MESSAGE_SIZE=$(printf '%s' "$MESSAGE" | wc -c)
     AVAILABLE_SPACE=$((MAX_PAYLOAD_SIZE - MESSAGE_SIZE - 200))  # 200 byte buffer
 
     if [ $AVAILABLE_SPACE -gt 0 ]; then
@@ -78,7 +78,7 @@ if [ -f "$LOG_FILE" ]; then
 ${SUMMARY_LOGS}"
 
             # If filtered logs are still too big, truncate them
-            FILTERED_SIZE=$(echo "$FILTERED_LOGS" | wc -c)
+            FILTERED_SIZE=$(printf '%s' "$FILTERED_LOGS" | wc -c)
             if [ "$FILTERED_SIZE" -gt "$AVAILABLE_SPACE" ]; then
                 LOG_CONTENT=$(echo "$FILTERED_LOGS" | head -c "$AVAILABLE_SPACE")
                 MESSAGE="${MESSAGE}... [FILTERED LOGS TRUNCATED - showing errors/warnings] ...
@@ -104,7 +104,7 @@ ${SUMMARY_LOGS}
 ${RECENT_LOGS}"
 
             # Truncate if needed
-            SUCCESS_SIZE=$(echo "$SUCCESS_LOGS" | wc -c)
+            SUCCESS_SIZE=$(printf '%s' "$SUCCESS_LOGS" | wc -c)
             if [ "$SUCCESS_SIZE" -gt "$AVAILABLE_SPACE" ]; then
                 LOG_CONTENT=$(echo "$SUCCESS_LOGS" | head -c "$AVAILABLE_SPACE")
                 MESSAGE="${MESSAGE}... [LOGS TRUNCATED - showing summary] ...
@@ -127,7 +127,7 @@ log "Sending notification to $ENDPOINT"
 CURL_EXIT=0
 curl -X POST \
     --data-raw "$MESSAGE" \
-    --user-agent "proton-backup/1.0" \
+    --user-agent "jottacloud-backup/1.0" \
     --connect-timeout 30 \
     --max-time 60 \
     --retry 3 \
@@ -155,7 +155,7 @@ if [ -f "$LOG_FILE" ]; then
     tail -c 90000 "$LOG_FILE" 2>/dev/null | \
     curl -X POST \
         --data-binary @- \
-        --user-agent "proton-backup/1.0" \
+        --user-agent "jottacloud-backup/1.0" \
         --connect-timeout 30 \
         --max-time 60 \
         --retry 2 \

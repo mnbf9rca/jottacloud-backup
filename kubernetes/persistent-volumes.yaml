@@ -1,26 +1,25 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: proton-backup-data-pv
-  namespace: proton-backup
+  name: jottacloud-backup-data-pv
 spec:
   capacity:
-    storage: 2Ti  # Adjust based on your Proton Drive size
+    storage: 2Ti  # Adjust based on your Jottacloud storage size
   accessModes:
     - ReadWriteMany
   nfs:
     server: 10.10.10.1  # Replace with your NFS server
-    path: "/tank/largeappdata/proton-drive"  # Replace with your NFS path
+    path: "/tank/largeappdata/jottacloud"  # Replace with your NFS path
   persistentVolumeReclaimPolicy: Retain
   storageClassName: retain-local-path
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: proton-backup-data-pvc
-  namespace: proton-backup
+  name: jottacloud-backup-data-pvc
+  namespace: jottacloud-backup
 spec:
-  volumeName: proton-backup-data-pv
+  volumeName: jottacloud-backup-data-pv
   accessModes:
     - ReadWriteMany
   storageClassName: retain-local-path
@@ -31,7 +30,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: proton-backup-config-pv
+  name: jottacloud-backup-config-pv
 spec:
   capacity:
     storage: 10Gi
@@ -41,16 +40,16 @@ spec:
   storageClassName: longhorn
   csi:
     driver: driver.longhorn.io
-    volumeHandle: proton-backup-config  # Explicit Longhorn volume name
+    volumeHandle: jottacloud-backup-config  # Explicit Longhorn volume name
     fsType: ext4
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: proton-backup-config-pvc
-  namespace: proton-backup
+  name: jottacloud-backup-config-pvc
+  namespace: jottacloud-backup
 spec:
-  volumeName: proton-backup-config-pv
+  volumeName: jottacloud-backup-config-pv
   accessModes:
     - ReadWriteOnce
   resources:

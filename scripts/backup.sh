@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=sh
 
 # Main backup orchestration script
 # Uses set -e to exit on errors but preserves output visibility
@@ -20,7 +21,7 @@ ERRORS=""
 SCRIPT_EXIT_CODE=0
 
 # Initialize logging (both temporary and persistent)
-echo "=== Proton Drive Backup Started at $(date) ===" | tee $LOG_FILE | tee -a $PERSISTENT_LOG_FILE
+echo "=== Jottacloud Backup Started at $(date) ===" | tee $LOG_FILE | tee -a $PERSISTENT_LOG_FILE
 
 # Log container build metadata as JSON for diagnostics
 BUILD_INFO=$(cat <<EOF
@@ -50,16 +51,16 @@ log "Data mount permissions: $(ls -lan /data 2>/dev/null || echo 'Failed to list
 
 # Function to handle script exit
 cleanup_and_exit() {
-    local exit_code=$1
-    local end_time=$(date +%s)
-    local duration=$((end_time - START_TIME))
+    _exit_code="$1"
+    _end_time=$(date +%s)
+    _duration=$((_end_time - START_TIME))
 
-    log "=== Backup completed with exit code $exit_code after ${duration}s ==="
+    log "=== Backup completed with exit code $_exit_code after ${_duration}s ==="
 
     # Send final notification
-    /scripts/healthcheck-notify.sh $exit_code "$LOG_FILE" $duration
+    /scripts/healthcheck-notify.sh "$_exit_code" "$LOG_FILE" "$_duration"
 
-    exit $exit_code
+    exit "$_exit_code"
 }
 
 # Set trap to handle exit
@@ -103,7 +104,7 @@ else
     log "WARNING: rclone config not found in secret at $SECRET_CONFIG"
 fi
 
-log "Starting Proton Drive sync process..."
+log "Starting Jottacloud sync process..."
 
 # Run rclone sync - capture output and exit code separately
 set +e
