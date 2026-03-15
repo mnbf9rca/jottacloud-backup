@@ -1,0 +1,149 @@
+name: Proton Drive Backup - Pull Request
+
+on:
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/proton-drive-backup
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@064fe7f3312418007dea2b49a19844a9ee378f49
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@a60f0f62b5c12316066c8db464bfb2faafd7907b
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=pr-${{ github.event.number }}-${{ github.event.pull_request.head.sha }}
+          flavor: |
+            latest=false
+
+      - name: Get current date
+        id: date
+        run: echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_DATE=${{ steps.date.outputs.BUILD_DATE }}
+            VCS_REF=${{ github.event.pull_request.head.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push=true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
+        with:
+          cosign-release: "v3.0.4"
+
+      - name: Sign the container image
+        env:
+          COSIGN_EXPERIMENTAL: 1
+        run: |
+          echo "Signing image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 0
+          version: v0.68.2
+
+      - name: Upload Trivy scan results to GitHub Security
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@ef618feace3c4838ae42b239ab86e8fb46437508
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container-scan
+
+      - name: Comment PR with build summary
+        uses: actions/github-script@450193c5abd4cdb17ba9f3ffcfe8f635c4bb6c2a
+        with:
+          script: |
+            const output = `
+            ## 🐳 Container Build Summary
+
+            **Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`
+            **Digest**: \`${{ steps.build.outputs.digest }}\`
+            **Platform**: linux/amd64
+            **Tags**: \`${{ steps.meta.outputs.tags }}\`
+
+            ### Security Features
+            - ✅ Container image built and pushed
+            - ✅ Signed with Cosign (keyless)
+            - ✅ Trivy vulnerability scan completed
+            - 📊 Results uploaded to GitHub Security tab
+            - 🔍 Review any findings before merging
+
+            > **Note**: Image is built, signed, and scanned for pull requests.
+            > Release workflow will retag this image upon merge.
+            `;
+
+            // Check if a comment with this content already exists
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existingComment = comments.data.find(comment =>
+              comment.body.includes('🐳 Container Build Summary')
+            );
+
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: output
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }
+
