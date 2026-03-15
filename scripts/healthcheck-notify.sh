@@ -40,7 +40,7 @@ HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -Iseconds)
 
 # Start building the message
-MESSAGE="Proton Drive Backup Report
+MESSAGE="Jottacloud Backup Report
 Status: $STATUS
 Exit Code: $EXIT_CODE
 Duration: ${DURATION}s
@@ -127,7 +127,7 @@ log "Sending notification to $ENDPOINT"
 CURL_EXIT=0
 curl -X POST \
     --data-raw "$MESSAGE" \
-    --user-agent "proton-backup/1.0" \
+    --user-agent "jottacloud-backup/1.0" \
     --connect-timeout 30 \
     --max-time 60 \
     --retry 3 \
@@ -155,7 +155,7 @@ if [ -f "$LOG_FILE" ]; then
     tail -c 90000 "$LOG_FILE" 2>/dev/null | \
     curl -X POST \
         --data-binary @- \
-        --user-agent "proton-backup/1.0" \
+        --user-agent "jottacloud-backup/1.0" \
         --connect-timeout 30 \
         --max-time 60 \
         --retry 2 \
