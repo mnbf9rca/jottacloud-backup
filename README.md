@@ -33,7 +33,7 @@ Edit `kubernetes/configmap.yaml` for your environment:
 # Update these values:
 S3_ENDPOINT: "s3.us-west-000.backblazeb2.com" # Your B2 region
 S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
-BACKUP_SCHEDULE: "0 */6 * * *" # Every 6 hours
+BACKUP_SCHEDULE: "45 */6 * * *" # Every 6 hours at :45 past
 ```
 
 ### 2. Create Namespace
