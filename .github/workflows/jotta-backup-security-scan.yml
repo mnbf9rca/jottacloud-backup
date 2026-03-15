@@ -1,4 +1,4 @@
-name: Proton Drive Backup - Scheduled Security Scan
+name: Jottacloud Backup - Scheduled Security Scan
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/proton-drive-backup
+  IMAGE_NAME: ${{ github.repository_owner }}/jottacloud-backup
 
 jobs:
   security-scan:
@@ -26,7 +26,7 @@ jobs:
       run: |
         # Get the latest digest from the main branch
         DIGEST=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/packages/container/proton-drive-backup/versions" \
+          "https://api.github.com/repos/${{ github.repository }}/packages/container/jottacloud-backup/versions" \
           | jq -r '.[0].name' 2>/dev/null || echo "")
 
         if [ -z "$DIGEST" ] || [ "$DIGEST" = "null" ]; then
