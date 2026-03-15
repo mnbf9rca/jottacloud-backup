@@ -48,7 +48,7 @@ jobs:
           RELEASE_BRANCHES: main,master
 
       - name: Log in to Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        uses: docker/login-action@9fe7774c8f8ebfade96f0a62aa10f3882309d517
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
