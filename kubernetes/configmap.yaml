@@ -5,7 +5,7 @@ metadata:
   namespace: jottacloud-backup
 data:
   # Backup configuration
-  BACKUP_SCHEDULE: "45 */6 * * *"  # Every 6 hours at :45 past
+  # Schedule is set in cronjob.yaml spec.schedule (45 */6 * * *)
   TZ: "UTC"
 
   # Rclone configuration
