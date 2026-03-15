@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=dash
 
 # Main backup orchestration script
 # Uses set -e to exit on errors but preserves output visibility
@@ -50,16 +51,17 @@ log "Data mount permissions: $(ls -lan /data 2>/dev/null || echo 'Failed to list
 
 # Function to handle script exit
 cleanup_and_exit() {
-    local exit_code=$1
-    local end_time=$(date +%s)
+    local exit_code="$1"
+    local end_time
+    end_time=$(date +%s)
     local duration=$((end_time - START_TIME))
 
     log "=== Backup completed with exit code $exit_code after ${duration}s ==="
 
     # Send final notification
-    /scripts/healthcheck-notify.sh $exit_code "$LOG_FILE" $duration
+    /scripts/healthcheck-notify.sh "$exit_code" "$LOG_FILE" "$duration"
 
-    exit $exit_code
+    exit "$exit_code"
 }
 
 # Set trap to handle exit

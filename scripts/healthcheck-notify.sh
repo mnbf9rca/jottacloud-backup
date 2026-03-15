@@ -10,7 +10,7 @@ DURATION="${3:-0}"
 
 # Configuration
 HEALTHCHECK_BASE_URL="${HEALTHCHECK_URL}"
-HEALTHCHECK_UUID="${HEALTHCHECK_UUID}"
+# HEALTHCHECK_UUID is expected from environment
 MAX_PAYLOAD_SIZE=95000  # 95KB to stay under 100KB limit
 
 # Function to log with timestamp
@@ -54,7 +54,7 @@ if [ -f "$LOG_FILE" ]; then
     log "Including log content (prioritizing errors and important info)"
 
     # Calculate how much space we have left for logs
-    MESSAGE_SIZE=$(echo "$MESSAGE" | wc -c)
+    MESSAGE_SIZE=${#MESSAGE}
     AVAILABLE_SPACE=$((MAX_PAYLOAD_SIZE - MESSAGE_SIZE - 200))  # 200 byte buffer
 
     if [ $AVAILABLE_SPACE -gt 0 ]; then
@@ -78,7 +78,7 @@ if [ -f "$LOG_FILE" ]; then
 ${SUMMARY_LOGS}"
 
             # If filtered logs are still too big, truncate them
-            FILTERED_SIZE=$(echo "$FILTERED_LOGS" | wc -c)
+            FILTERED_SIZE=${#FILTERED_LOGS}
             if [ "$FILTERED_SIZE" -gt "$AVAILABLE_SPACE" ]; then
                 LOG_CONTENT=$(echo "$FILTERED_LOGS" | head -c "$AVAILABLE_SPACE")
                 MESSAGE="${MESSAGE}... [FILTERED LOGS TRUNCATED - showing errors/warnings] ...
@@ -104,7 +104,7 @@ ${SUMMARY_LOGS}
 ${RECENT_LOGS}"
 
             # Truncate if needed
-            SUCCESS_SIZE=$(echo "$SUCCESS_LOGS" | wc -c)
+            SUCCESS_SIZE=${#SUCCESS_LOGS}
             if [ "$SUCCESS_SIZE" -gt "$AVAILABLE_SPACE" ]; then
                 LOG_CONTENT=$(echo "$SUCCESS_LOGS" | head -c "$AVAILABLE_SPACE")
                 MESSAGE="${MESSAGE}... [LOGS TRUNCATED - showing summary] ...

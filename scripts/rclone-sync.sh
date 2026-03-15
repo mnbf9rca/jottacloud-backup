@@ -4,9 +4,7 @@
 set -e
 
 # Configuration - no defaults for critical paths to prevent masking config failures
-RCLONE_CONFIG_FILE="${RCLONE_CONFIG_FILE}"
-JOTTA_REMOTE="${JOTTA_REMOTE}"
-LOCAL_PATH="${LOCAL_PATH}"
+# Required from environment: RCLONE_CONFIG_FILE, JOTTA_REMOTE, LOCAL_PATH
 RCLONE_LOG_LEVEL="${RCLONE_LOG_LEVEL:-INFO}"
 
 # Function to log with timestamp
