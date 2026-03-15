@@ -15,9 +15,44 @@ Automated, secure backup of Jottacloud to Backblaze B2 using rclone and Kopia in
 2. **Kopia** creates encrypted backups to Backblaze B2
 3. **CronJob** runs on schedule (default: every 6 hours)
 
-## Quick Start
+## Setup
 
-### 1. Configure Storage & Settings
+### Prerequisites
+
+- Kubernetes cluster with NFS storage
+- Backblaze B2 account
+- rclone installed locally (for initial Jottacloud auth)
+
+### 1. Create rclone config
+
+```bash
+rclone config
+# n) New remote
+# name: jotta
+# type: jottacloud
+# auth type: standard (default)
+# Generate a personal login token from:
+#   Jottacloud web UI → Settings → Security → Personal Login Token
+# Paste the token when prompted
+# Non-default storage: y (to access Sync mountpoint)
+# Device: Jotta (default)
+# Mountpoint: Sync
+
+# Verify it works
+rclone lsd jotta:
+```
+
+> **Note:** Jottacloud tokens rotate aggressively and only one session can be active per config. Each container instance must use its own rclone config — do not share configs between machines. If the config PVC is lost, you will need to generate a new personal login token from the Jottacloud web UI and re-run `rclone config`.
+
+If your local `rclone.conf` contains other remotes, extract just the jotta section:
+
+```bash
+rclone config show jotta > /tmp/jotta-rclone.conf
+# Then use /tmp/jotta-rclone.conf instead of $HOME/.config/rclone/rclone.conf
+# in the secret creation step below
+```
+
+### 2. Configure Kubernetes manifests
 
 Edit `kubernetes/persistent-volumes.yaml` for your NFS server:
 
@@ -33,37 +68,113 @@ Edit `kubernetes/configmap.yaml` for your environment:
 # Update these values:
 S3_ENDPOINT: "s3.us-west-000.backblazeb2.com" # Your B2 region
 S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
-BACKUP_SCHEDULE: "45 */6 * * *" # Every 6 hours at :45 past
 ```
 
-### 2. Create Namespace
+Edit `kubernetes/cronjob.yaml` to adjust the schedule if needed (default: every 6 hours at :45 past).
+
+Create a Longhorn volume named `jottacloud-backup-config` (10Gi) via the Longhorn UI. This is used by the config PV to persist rclone and Kopia state across runs.
+
+### 3. Create namespace and secrets
 
 ```bash
 kubectl apply -f kubernetes/pod-security-policy.yaml
-```
 
-### 3. Create Secrets
-
-```bash
-# Create rclone config locally first
-rclone config  # Choose jottacloud, complete the auth flow
-
-# Create secret with all credentials
 kubectl create secret generic jottacloud-backup-secrets \
   --namespace=jottacloud-backup \
-  --from-file=RCLONE_CONFIG='$HOME/.config/rclone/rclone.conf' \
+  --from-file=RCLONE_CONFIG="$HOME/.config/rclone/rclone.conf" \
   --from-literal=S3_ACCESS_KEY='your-b2-key-id' \
   --from-literal=S3_SECRET_KEY='your-b2-app-key' \
   --from-literal=KOPIA_PASSWORD='your-repo-password' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-> **Note:** Jottacloud uses OAuth tokens that rotate aggressively. Each container instance should use its own rclone config. If the PVC is lost, you will need to re-authenticate and generate a new login token.
+### 4. (Optional) Migrate from proton-drive-backup
 
-### 4. Deploy
+If you are replacing an existing [proton-drive-backup](https://github.com/mnbf9rca/proton-drive-backup) deployment that shares the same Kopia repository and NFS storage:
+
+#### 4a. Copy secrets from proton
+
+Since both containers share the same B2 bucket and Kopia repo, copy the existing secret and replace the rclone config:
 
 ```bash
-# Deploy storage, configuration, and CronJob
+# Copy the proton secret to the new namespace (created by step 3)
+kubectl get secret proton-backup-secrets -n proton-backup -o json | \
+  jq '.metadata = {name: "jottacloud-backup-secrets", namespace: "jottacloud-backup"}' | \
+  kubectl apply -f -
+
+# Patch just the rclone config key (keeps S3/Kopia credentials intact)
+RCLONE_B64=$(base64 < /tmp/jotta-rclone.conf | tr -d '\n')
+kubectl patch secret jottacloud-backup-secrets -n jottacloud-backup \
+  -p "{\"data\":{\"RCLONE_CONFIG\":\"$RCLONE_B64\"}}"
+```
+
+You can skip step 3's `kubectl create secret` command if you do this.
+
+#### 4b. Stop the Proton deployment
+
+Remove the CronJob and supporting resources, but keep secrets and configmap for rollback:
+
+```bash
+kubectl delete cronjob proton-backup-scheduled -n proton-backup
+kubectl delete serviceaccount proton-backup-sa -n proton-backup
+kubectl delete networkpolicy proton-backup-network-policy -n proton-backup
+kubectl delete pvc proton-backup-data-pvc proton-backup-config-pvc -n proton-backup
+kubectl delete pv proton-backup-data-pv proton-backup-config-pv
+```
+
+#### 4c. Rename paths on the NFS server
+
+Rename both the top-level NFS export and the data subdirectory so they match the new PV and `LOCAL_PATH` config:
+
+```bash
+# Rename the NFS export to match the new PV path
+mv /tank/largeappdata/proton-drive /tank/largeappdata/jottacloud
+
+# Rename the data subdirectory to match LOCAL_PATH (/data/jotta)
+mv /tank/largeappdata/jottacloud/proton /tank/largeappdata/jottacloud/jotta
+```
+
+The first rclone sync will compare the existing files against Jottacloud and only download the differences. Kopia's content-addressable dedup means identical files are not re-uploaded to B2.
+
+#### 4d. Move Kopia snapshot history
+
+Re-parent existing snapshots to the new client identity. This rewrites snapshot manifests only — no data is re-uploaded. The S3/Kopia credentials are the same (shared B2 bucket and Kopia repo).
+
+```bash
+# Dry run first
+kopia snapshot move-history \
+  backup@proton-backup-client:/data/proton \
+  backup@jotta-backup-client:/data/jotta \
+  --dry-run
+
+# If that looks correct, run for real
+kopia snapshot move-history \
+  backup@proton-backup-client:/data/proton \
+  backup@jotta-backup-client:/data/jotta
+
+# Transfer maintenance ownership to the new identity
+kopia maintenance set --owner backup@jotta-backup-client
+```
+
+#### Rollback
+
+If the first Jottacloud backup fails after moving snapshot history:
+
+```bash
+# Reverse the history move
+kopia snapshot move-history \
+  backup@jotta-backup-client:/data/jotta \
+  backup@proton-backup-client:/data/proton
+
+# Rename NFS path back
+mv /tank/largeappdata/jottacloud /tank/largeappdata/proton-drive
+
+# Re-deploy proton-drive-backup
+```
+
+### 5. Deploy
+
+```bash
 kubectl apply -f kubernetes/persistent-volumes.yaml
 kubectl apply -f kubernetes/configmap.yaml
 kubectl apply -f kubernetes/serviceaccount.yaml
@@ -71,36 +182,45 @@ kubectl apply -f kubernetes/network-policy.yaml
 kubectl apply -f kubernetes/cronjob.yaml
 ```
 
+### 6. Verify
+
+```bash
+# Run a manual backup
+kubectl create job manual-backup-$(date +%s) \
+  --from=cronjob/jottacloud-backup-scheduled -n jottacloud-backup
+
+# Watch the logs
+kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) \
+  -n jottacloud-backup
+```
+
+### 7. (Migration only) Clean up proton namespace
+
+Once the Jottacloud backup is running successfully, remove the remaining proton resources:
+
+```bash
+kubectl delete namespace proton-backup
+```
+
 ## Configuration
 
 ### Required Secrets
 
-| Variable         | Description                       |
-| ---------------- | --------------------------------- |
-| `RCLONE_CONFIG`  | Base64-encoded rclone config file |
-| `S3_ACCESS_KEY`  | Backblaze B2 key ID               |
-| `S3_SECRET_KEY`  | Backblaze B2 application key      |
-| `KOPIA_PASSWORD` | Repository encryption password    |
+| Variable         | Description                    |
+| ---------------- | ------------------------------ |
+| `RCLONE_CONFIG`  | rclone config file (mounted as `/tmp/rclone-secret/rclone.conf`) |
+| `S3_ACCESS_KEY`  | Backblaze B2 key ID            |
+| `S3_SECRET_KEY`  | Backblaze B2 application key   |
+| `KOPIA_PASSWORD` | Repository encryption password |
 
-### Update Secrets
-
-```bash
-# To update secrets (same command works for create/update)
-kubectl create secret generic jottacloud-backup-secrets \
-  --namespace=jottacloud-backup \
-  --from-file=RCLONE_CONFIG=$HOME/.config/rclone/rclone.conf \
-  --from-literal=S3_ACCESS_KEY="your-new-key" \
-  --from-literal=S3_SECRET_KEY="your-new-secret" \
-  --from-literal=KOPIA_PASSWORD="your-repo-password" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
+Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`).
 
 ## Monitoring
 
 Optional [healthchecks.io](https://healthchecks.io) integration:
 
 1. Create a check, copy the UUID
-2. Set `HEALTHCHECK_UUID` in the secret
+2. Set `HEALTHCHECK_UUID` in the ConfigMap (`kubernetes/configmap.yaml`)
 
 ## Kopia Repository Management
 
@@ -147,11 +267,8 @@ kubectl create job manual-backup-$(date +%s) \
   --from=cronjob/jottacloud-backup-scheduled -n jottacloud-backup
 
 # View logs
-kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) -n jottacloud-backup
-
-# Update to latest image
-kubectl delete cronjob jottacloud-backup-scheduled -n jottacloud-backup
-kubectl apply -f kubernetes/cronjob.yaml
+kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) \
+  -n jottacloud-backup
 ```
 
 ## Security Features
