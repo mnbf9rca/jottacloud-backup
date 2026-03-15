@@ -77,11 +77,10 @@ kubectl apply -f kubernetes/pod-security-policy.yaml
 
 kubectl create secret generic jottacloud-backup-secrets \
   --namespace=jottacloud-backup \
-  --from-file=rclone-config=$HOME/.config/rclone/rclone.conf \
+  --from-file=RCLONE_CONFIG=$HOME/.config/rclone/rclone.conf \
   --from-literal=S3_ACCESS_KEY='your-b2-key-id' \
   --from-literal=S3_SECRET_KEY='your-b2-app-key' \
   --from-literal=KOPIA_PASSWORD='your-repo-password' \
-  --from-literal=HEALTHCHECK_UUID='your-healthcheck-uuid' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
@@ -173,13 +172,14 @@ kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) \
 
 ### Required Secrets
 
-| Variable           | Description                       |
-| ------------------ | --------------------------------- |
-| `rclone-config`    | rclone config file                |
-| `S3_ACCESS_KEY`    | Backblaze B2 key ID               |
-| `S3_SECRET_KEY`    | Backblaze B2 application key      |
-| `KOPIA_PASSWORD`   | Repository encryption password    |
-| `HEALTHCHECK_UUID` | healthchecks.io check UUID        |
+| Variable         | Description                    |
+| ---------------- | ------------------------------ |
+| `RCLONE_CONFIG`  | rclone config file (mounted as `/tmp/rclone-secret/rclone.conf`) |
+| `S3_ACCESS_KEY`  | Backblaze B2 key ID            |
+| `S3_SECRET_KEY`  | Backblaze B2 application key   |
+| `KOPIA_PASSWORD` | Repository encryption password |
+
+Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`).
 
 ## Monitoring
 

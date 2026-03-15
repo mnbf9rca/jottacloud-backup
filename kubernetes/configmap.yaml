@@ -29,7 +29,7 @@ data:
 
   # Healthcheck configuration
   HEALTHCHECK_URL: "https://hc-ping.com"
-  # HEALTHCHECK_UUID set via K8s secret, not committed to repo
+  HEALTHCHECK_UUID: ""  # Set to your healthchecks.io check UUID
 
   # Resource limits for backup jobs
   BACKUP_TIMEOUT: "6h"
