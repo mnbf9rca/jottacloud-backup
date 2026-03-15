@@ -3,20 +3,18 @@
 ## Setup rclone
 
 1. Install rclone v1.71.0+
-2. Login to Proton Drive in browser first (required)
-3. Configure rclone:
+2. Configure rclone:
 ```bash
 rclone config
 # n) New remote
-# name: proton
-# type: protondrive
-# username: your-email@protonmail.com
-# password: your-password
+# name: jotta
+# type: jottacloud
+# Follow the auth flow to obtain a login token
 ```
 
 ## Test Connection
 ```bash
-rclone lsd proton:
+rclone lsd jotta:
 ```
 
 ## Run Script
@@ -24,8 +22,8 @@ rclone lsd proton:
 Set environment variables:
 ```bash
 export RCLONE_CONFIG_FILE="$HOME/.config/rclone/rclone.conf"
-export PROTON_REMOTE="proton"
-export LOCAL_PATH="/tmp/proton-backup-test"
+export JOTTA_REMOTE="jotta"
+export LOCAL_PATH="/tmp/jotta-backup-test"
 ```
 
 Run:
@@ -37,21 +35,21 @@ Run:
 
 ```bash
 # Build
-docker build -t proton-backup-test .
+docker build -t jottacloud-backup-test .
 
 # Run
 docker run --rm -it \
   -v ~/.config/rclone/rclone.conf:/config/rclone.conf:ro \
-  -v /tmp/proton-data:/data \
+  -v /tmp/jotta-data:/data \
   -e RCLONE_CONFIG_FILE="/config/rclone.conf" \
-  -e PROTON_REMOTE="proton" \
-  -e LOCAL_PATH="/data/proton" \
-  proton-backup-test \
+  -e JOTTA_REMOTE="jotta" \
+  -e LOCAL_PATH="/data/jotta" \
+  jottacloud-backup-test \
   /scripts/rclone-sync.sh
 ```
 
 ## Common Issues
 
-- **"protondrive not found"**: Update rclone
-- **"Failed to connect"**: Login to Proton Drive web first
+- **"jottacloud not found"**: Update rclone to v1.71.0 or later
+- **"Token expired"**: Jottacloud tokens rotate aggressively; re-run `rclone config reconnect jotta:` to obtain a fresh token
 - **"Config file not found"**: Check RCLONE_CONFIG_FILE path

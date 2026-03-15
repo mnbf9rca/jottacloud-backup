@@ -1,19 +1,19 @@
-# Proton Drive Backup Container
+# Jottacloud Backup Container
 
-Automated, secure backup of Proton Drive to Backblaze B2 using rclone and Kopia in Kubernetes.
+Automated, secure backup of Jottacloud to Backblaze B2 using rclone and Kopia in Kubernetes.
 
 ## Features
 
-- **🔒 Security First**: Non-root user, minimal Alpine base, signed container images
-- **📦 Multi-Architecture**: Supports amd64 and arm64
-- **📊 Monitoring**: Built-in healthchecks.io integration
-- **🎯 Kubernetes Native**: CronJob-based scheduled backups
+- **Security First**: Non-root user, minimal Alpine base, signed container images
+- **Multi-Architecture**: Supports amd64 and arm64
+- **Monitoring**: Built-in healthchecks.io integration
+- **Kubernetes Native**: CronJob-based scheduled backups
 
 ## How It Works
 
-1. **rclone** downloads Proton Drive to local storage
+1. **rclone** downloads Jottacloud files to local storage
 2. **Kopia** creates encrypted backups to Backblaze B2
-3. **CronJob** runs on schedule (default: daily at 2 AM)
+3. **CronJob** runs on schedule (default: every 6 hours)
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ Edit `kubernetes/persistent-volumes.yaml` for your NFS server:
 ```yaml
 nfs:
   server: 10.10.10.1 # Your NFS server
-  path: "/tank/backup/proton-drive"
+  path: "/tank/backup/jottacloud"
 ```
 
 Edit `kubernetes/configmap.yaml` for your environment:
@@ -33,8 +33,7 @@ Edit `kubernetes/configmap.yaml` for your environment:
 # Update these values:
 S3_ENDPOINT: "s3.us-west-000.backblazeb2.com" # Your B2 region
 S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
-HEALTHCHECK_UUID: "your-healthchecks-io-uuid" # Optional monitoring
-BACKUP_SCHEDULE: "0 2 * * *" # Daily at 2 AM
+BACKUP_SCHEDULE: "0 */6 * * *" # Every 6 hours
 ```
 
 ### 2. Create Namespace
@@ -47,17 +46,19 @@ kubectl apply -f kubernetes/pod-security-policy.yaml
 
 ```bash
 # Create rclone config locally first
-rclone config  # Choose protondrive, enter email/password
+rclone config  # Choose jottacloud, complete the auth flow
 
 # Create secret with all credentials
-kubectl create secret generic proton-backup-secrets \
-  --namespace=proton-backup \
+kubectl create secret generic jottacloud-backup-secrets \
+  --namespace=jottacloud-backup \
   --from-file=RCLONE_CONFIG='$HOME/.config/rclone/rclone.conf' \
   --from-literal=S3_ACCESS_KEY='your-b2-key-id' \
   --from-literal=S3_SECRET_KEY='your-b2-app-key' \
   --from-literal=KOPIA_PASSWORD='your-repo-password' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
+
+> **Note:** Jottacloud uses OAuth tokens that rotate aggressively. Each container instance should use its own rclone config. If the PVC is lost, you will need to re-authenticate and generate a new login token.
 
 ### 4. Deploy
 
@@ -85,8 +86,8 @@ kubectl apply -f kubernetes/cronjob.yaml
 
 ```bash
 # To update secrets (same command works for create/update)
-kubectl create secret generic proton-backup-secrets \
-  --namespace=proton-backup \
+kubectl create secret generic jottacloud-backup-secrets \
+  --namespace=jottacloud-backup \
   --from-file=RCLONE_CONFIG=$HOME/.config/rclone/rclone.conf \
   --from-literal=S3_ACCESS_KEY="your-new-key" \
   --from-literal=S3_SECRET_KEY="your-new-secret" \
@@ -99,15 +100,15 @@ kubectl create secret generic proton-backup-secrets \
 Optional [healthchecks.io](https://healthchecks.io) integration:
 
 1. Create a check, copy the UUID
-2. Set `HEALTHCHECK_UUID` in ConfigMap
+2. Set `HEALTHCHECK_UUID` in the secret
 
 ## Kopia Repository Management
 
-The container uses a **stable client identity** (`backup@proton-backup-client`) to avoid creating multiple client entries in your Kopia repository with each container run.
+The container uses a **stable client identity** (`backup@jotta-backup-client`) to avoid creating multiple client entries in your Kopia repository with each container run.
 
 ### Client Identity
 
-- **Hostname**: `proton-backup-client` (consistent across runs)
+- **Hostname**: `jotta-backup-client` (consistent across runs)
 - **Username**: `backup` (dedicated backup user)
 - **Benefits**: Clean policy management, single client identity in repository
 
@@ -133,7 +134,7 @@ You can manage backup policies from your local Kopia client:
 kopia snapshot list --all
 
 # Set retention policy for the backup client
-kopia policy set backup@proton-backup-client \
+kopia policy set backup@jotta-backup-client \
   --retention-period=1y \
   --compression=zstd
 ```
@@ -143,13 +144,13 @@ kopia policy set backup@proton-backup-client \
 ```bash
 # Run backup immediately
 kubectl create job manual-backup-$(date +%s) \
-  --from=cronjob/proton-backup-scheduled -n proton-backup
+  --from=cronjob/jottacloud-backup-scheduled -n jottacloud-backup
 
 # View logs
-kubectl logs -f $(kubectl get jobs -n proton-backup -o name | tail -1) -n proton-backup
+kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) -n jottacloud-backup
 
 # Update to latest image
-kubectl delete cronjob proton-backup-scheduled -n proton-backup
+kubectl delete cronjob jottacloud-backup-scheduled -n jottacloud-backup
 kubectl apply -f kubernetes/cronjob.yaml
 ```
 
