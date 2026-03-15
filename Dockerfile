@@ -3,7 +3,7 @@
 FROM alpine:3.23.3 AS builder
 
 # Define versions for reproducible builds (checksums fetched dynamically)
-ARG RCLONE_VERSION=1.72.1
+ARG RCLONE_VERSION=1.73.2
 ARG KOPIA_VERSION=0.22.3
 
 WORKDIR /tmp
