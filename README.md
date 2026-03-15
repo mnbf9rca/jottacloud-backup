@@ -120,15 +120,19 @@ kubectl delete pvc proton-backup-data-pvc proton-backup-config-pvc -n proton-bac
 kubectl delete pv proton-backup-data-pv proton-backup-config-pv
 ```
 
-#### 4c. Rename the NFS path
+#### 4c. Rename paths on the NFS server
 
-On your NFS server, rename the data directory to match the new PV path:
+Rename both the top-level NFS export and the data subdirectory so they match the new PV and `LOCAL_PATH` config:
 
 ```bash
+# Rename the NFS export to match the new PV path
 mv /tank/largeappdata/proton-drive /tank/largeappdata/jottacloud
+
+# Rename the data subdirectory to match LOCAL_PATH (/data/jotta)
+mv /tank/largeappdata/jottacloud/proton /tank/largeappdata/jottacloud/jotta
 ```
 
-The first rclone sync will replace the old Proton files with Jottacloud files. Kopia's content-addressable dedup means any identical files between the two are not re-uploaded to B2.
+The first rclone sync will compare the existing files against Jottacloud and only download the differences. Kopia's content-addressable dedup means identical files are not re-uploaded to B2.
 
 #### 4d. Move Kopia snapshot history
 
