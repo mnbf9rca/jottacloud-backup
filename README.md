@@ -87,26 +87,65 @@ kubectl create secret generic jottacloud-backup-secrets \
 
 ### 4. (Optional) Migrate from proton-drive-backup
 
-If you are replacing an existing [proton-drive-backup](https://github.com/mnbf9rca/proton-drive-backup) deployment and want to preserve Kopia snapshot history:
+If you are replacing an existing [proton-drive-backup](https://github.com/mnbf9rca/proton-drive-backup) deployment that shares the same Kopia repository and NFS storage:
+
+#### 4a. Remove the Proton deployment
+
+Delete all Proton K8s resources — the NFS data is preserved on the NFS server itself:
 
 ```bash
-# Suspend the Proton CronJob to prevent concurrent Kopia repo access
-kubectl patch cronjob proton-backup-scheduled -n proton-backup \
-  -p '{"spec":{"suspend":true}}'
+kubectl delete cronjob proton-backup-scheduled -n proton-backup
+kubectl delete configmap proton-backup-config -n proton-backup
+kubectl delete secret proton-backup-secrets -n proton-backup
+kubectl delete serviceaccount proton-backup-sa -n proton-backup
+kubectl delete networkpolicy proton-backup-network-policy -n proton-backup
+kubectl delete pvc proton-backup-data-pvc proton-backup-config-pvc -n proton-backup
+kubectl delete pv proton-backup-data-pv proton-backup-config-pv
+kubectl delete namespace proton-backup
+```
 
-# Re-parent existing snapshots to the new client identity (dry run first)
+#### 4b. Rename the NFS path
+
+On your NFS server, rename the data directory to match the new PV path:
+
+```bash
+mv /tank/largeappdata/proton-drive /tank/largeappdata/jottacloud
+```
+
+The first rclone sync will replace the old Proton files with Jottacloud files. Kopia's content-addressable dedup means any identical files between the two are not re-uploaded to B2.
+
+#### 4c. Move Kopia snapshot history
+
+Re-parent existing snapshots to the new client identity. This rewrites snapshot manifests only — no data is re-uploaded. The S3/Kopia credentials are the same (shared B2 bucket and Kopia repo).
+
+```bash
+# Dry run first
 kopia snapshot move-history \
   backup@proton-backup-client:/data/proton \
   backup@jotta-backup-client:/data/jotta \
   --dry-run
 
-# If the dry run looks correct, run for real
+# If that looks correct, run for real
 kopia snapshot move-history \
   backup@proton-backup-client:/data/proton \
   backup@jotta-backup-client:/data/jotta
 ```
 
-This rewrites snapshot manifests only — no data is re-uploaded. The S3/Kopia credentials are the same (shared B2 bucket and Kopia repo).
+#### Rollback
+
+If the first Jottacloud backup fails after moving snapshot history:
+
+```bash
+# Reverse the history move
+kopia snapshot move-history \
+  backup@jotta-backup-client:/data/jotta \
+  backup@proton-backup-client:/data/proton
+
+# Rename NFS path back
+mv /tank/largeappdata/jottacloud /tank/largeappdata/proton-drive
+
+# Re-deploy proton-drive-backup
+```
 
 ### 5. Deploy
 
@@ -128,28 +167,6 @@ kubectl create job manual-backup-$(date +%s) \
 # Watch the logs
 kubectl logs -f $(kubectl get jobs -n jottacloud-backup -o name | tail -1) \
   -n jottacloud-backup
-```
-
-### 7. (Optional) Decommission proton-drive-backup
-
-Once the Jottacloud backup is running successfully:
-
-```bash
-kubectl delete cronjob proton-backup-scheduled -n proton-backup
-kubectl delete configmap proton-backup-config -n proton-backup
-kubectl delete secret proton-backup-secrets -n proton-backup
-# Delete namespace if nothing else uses it
-kubectl delete namespace proton-backup
-```
-
-**Rollback** if the first Jottacloud backup fails after moving snapshot history:
-
-```bash
-kopia snapshot move-history \
-  backup@jotta-backup-client:/data/jotta \
-  backup@proton-backup-client:/data/proton
-kubectl patch cronjob proton-backup-scheduled -n proton-backup \
-  -p '{"spec":{"suspend":false}}'
 ```
 
 ## Configuration
