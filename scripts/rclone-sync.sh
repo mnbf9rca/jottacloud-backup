@@ -1,11 +1,11 @@
 #!/bin/sh
 
-# Rclone sync script for Proton Drive
+# Rclone sync script for Jottacloud
 set -e
 
 # Configuration - no defaults for critical paths to prevent masking config failures
 RCLONE_CONFIG_FILE="${RCLONE_CONFIG_FILE}"
-PROTON_REMOTE="${PROTON_REMOTE}"
+JOTTA_REMOTE="${JOTTA_REMOTE}"
 LOCAL_PATH="${LOCAL_PATH}"
 RCLONE_LOG_LEVEL="${RCLONE_LOG_LEVEL:-INFO}"
 
@@ -20,8 +20,8 @@ if [ -z "$RCLONE_CONFIG_FILE" ]; then
     exit 1
 fi
 
-if [ -z "$PROTON_REMOTE" ]; then
-    log "ERROR: PROTON_REMOTE environment variable is required"
+if [ -z "$JOTTA_REMOTE" ]; then
+    log "ERROR: JOTTA_REMOTE environment variable is required"
     exit 1
 fi
 
@@ -38,15 +38,15 @@ fi
 # Create local directory if it doesn't exist
 mkdir -p "$LOCAL_PATH"
 
-log "Starting Proton Drive sync..."
-log "Remote: $PROTON_REMOTE"
+log "Starting Jottacloud sync..."
+log "Remote: $JOTTA_REMOTE"
 log "Local path: $LOCAL_PATH"
 log "Config file: $RCLONE_CONFIG_FILE"
 
 # Test connection first
-log "Testing connection to Proton Drive..."
-if ! rclone --config="$RCLONE_CONFIG_FILE" lsd "$PROTON_REMOTE:" --max-depth 1; then
-    log "ERROR: Failed to connect to Proton Drive remote '$PROTON_REMOTE'"
+log "Testing connection to Jottacloud..."
+if ! rclone --config="$RCLONE_CONFIG_FILE" lsd "$JOTTA_REMOTE:" --max-depth 1; then
+    log "ERROR: Failed to connect to Jottacloud remote '$JOTTA_REMOTE'"
     exit 1
 fi
 
@@ -70,7 +70,7 @@ mkdir -p "$LOCAL_PATH" || {
 
 # Perform the sync with comprehensive logging
 # Using sync instead of copy to handle deletions
-log "Starting rclone sync from $PROTON_REMOTE: to $LOCAL_PATH"
+log "Starting rclone sync from $JOTTA_REMOTE: to $LOCAL_PATH"
 
 # Create rclone logs directory
 RCLONE_LOG_DIR="/data/logs/rclone"
@@ -93,7 +93,7 @@ rclone sync \
     --timeout=10m \
     --contimeout=60s \
     --low-level-retries=10 \
-    "$PROTON_REMOTE:" "$LOCAL_PATH"
+    "$JOTTA_REMOTE:" "$LOCAL_PATH"
 
 RCLONE_EXIT=$?
 
