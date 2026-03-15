@@ -20,7 +20,7 @@ ERRORS=""
 SCRIPT_EXIT_CODE=0
 
 # Initialize logging (both temporary and persistent)
-echo "=== Proton Drive Backup Started at $(date) ===" | tee $LOG_FILE | tee -a $PERSISTENT_LOG_FILE
+echo "=== Jottacloud Backup Started at $(date) ===" | tee $LOG_FILE | tee -a $PERSISTENT_LOG_FILE
 
 # Log container build metadata as JSON for diagnostics
 BUILD_INFO=$(cat <<EOF
@@ -103,7 +103,7 @@ else
     log "WARNING: rclone config not found in secret at $SECRET_CONFIG"
 fi
 
-log "Starting Proton Drive sync process..."
+log "Starting Jottacloud sync process..."
 
 # Run rclone sync - capture output and exit code separately
 set +e
