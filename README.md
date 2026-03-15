@@ -48,6 +48,8 @@ If your local `rclone.conf` contains other remotes, extract just the jotta secti
 
 ```bash
 rclone config show jotta > /tmp/jotta-rclone.conf
+# Then use /tmp/jotta-rclone.conf instead of $HOME/.config/rclone/rclone.conf
+# in the secret creation step below
 ```
 
 ### 2. Configure Kubernetes manifests
@@ -79,7 +81,7 @@ kubectl apply -f kubernetes/pod-security-policy.yaml
 
 kubectl create secret generic jottacloud-backup-secrets \
   --namespace=jottacloud-backup \
-  --from-file=RCLONE_CONFIG=$HOME/.config/rclone/rclone.conf \
+  --from-file=RCLONE_CONFIG="$HOME/.config/rclone/rclone.conf" \
   --from-literal=S3_ACCESS_KEY='your-b2-key-id' \
   --from-literal=S3_SECRET_KEY='your-b2-app-key' \
   --from-literal=KOPIA_PASSWORD='your-repo-password' \
@@ -101,7 +103,7 @@ kubectl get secret proton-backup-secrets -n proton-backup -o json | \
   kubectl apply -f -
 
 # Patch just the rclone config key (keeps S3/Kopia credentials intact)
-RCLONE_B64=$(base64 < /tmp/jotta-rclone.conf)
+RCLONE_B64=$(base64 < /tmp/jotta-rclone.conf | tr -d '\n')
 kubectl patch secret jottacloud-backup-secrets -n jottacloud-backup \
   -p "{\"data\":{\"RCLONE_CONFIG\":\"$RCLONE_B64\"}}"
 ```
@@ -215,7 +217,7 @@ Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goe
 Optional [healthchecks.io](https://healthchecks.io) integration:
 
 1. Create a check, copy the UUID
-2. Set `HEALTHCHECK_UUID` in the secret
+2. Set `HEALTHCHECK_UUID` in the ConfigMap (`kubernetes/configmap.yaml`)
 
 ## Kopia Repository Management
 
