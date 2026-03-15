@@ -1,12 +1,12 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: proton-backup-scheduled
-  namespace: proton-backup
+  name: jottacloud-backup-scheduled
+  namespace: jottacloud-backup
   labels:
-    app: proton-backup
+    app: jottacloud-backup
 spec:
-  schedule: "45 */6 * * *"  # Daily at 2 AM UTC
+  schedule: "45 */6 * * *"  # Every 6 hours at :45 past
   timeZone: "UTC"
   concurrencyPolicy: Forbid  # Prevent overlapping backup jobs
   successfulJobsHistoryLimit: 3
@@ -19,12 +19,12 @@ spec:
       template:
         metadata:
           labels:
-            app: proton-backup
+            app: jottacloud-backup
             job-type: scheduled
           annotations: {}
         spec:
           restartPolicy: OnFailure
-          serviceAccountName: proton-backup-sa
+          serviceAccountName: jottacloud-backup-sa
           securityContext:
             # Pod-level security context
             runAsNonRoot: true
@@ -38,7 +38,7 @@ spec:
             supplementalGroups: []
           containers:
           - name: backup
-            image: ghcr.io/mnbf9rca/proton-drive-backup:latest
+            image: ghcr.io/mnbf9rca/jottacloud-backup:latest
             imagePullPolicy: Always
             securityContext:
               # Container-level security context (overrides pod-level when specified)
@@ -74,9 +74,9 @@ spec:
                   fieldPath: metadata.labels['job-name']
             envFrom:
             - configMapRef:
-                name: proton-backup-config
+                name: jottacloud-backup-config
             - secretRef:
-                name: proton-backup-secrets
+                name: jottacloud-backup-secrets
             volumeMounts:
             - name: data
               mountPath: /data
@@ -109,16 +109,16 @@ spec:
           volumes:
           - name: data
             persistentVolumeClaim:
-              claimName: proton-backup-data-pvc
+              claimName: jottacloud-backup-data-pvc
           - name: config
             persistentVolumeClaim:
-              claimName: proton-backup-config-pvc
+              claimName: jottacloud-backup-config-pvc
           - name: tmp
             emptyDir:
               sizeLimit: 5Gi
           - name: rclone-config-secret
             secret:
-              secretName: proton-backup-secrets
+              secretName: jottacloud-backup-secrets
               items:
               - key: RCLONE_CONFIG
                 path: rclone.conf

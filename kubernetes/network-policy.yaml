@@ -1,12 +1,12 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: proton-backup-network-policy
-  namespace: proton-backup
+  name: jottacloud-backup-network-policy
+  namespace: jottacloud-backup
 spec:
   podSelector:
     matchLabels:
-      app: proton-backup
+      app: jottacloud-backup
   policyTypes:
   - Egress
   - Ingress
@@ -30,7 +30,7 @@ spec:
     - protocol: TCP
       port: 53
 
-  # Allow HTTPS to external services (Proton Drive, Backblaze B2, healthchecks.io)
+  # Allow HTTPS to external services (Jottacloud, Backblaze B2, healthchecks.io)
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
