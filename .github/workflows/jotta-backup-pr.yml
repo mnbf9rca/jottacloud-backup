@@ -52,7 +52,7 @@ jobs:
 
       - name: Build Docker image
         id: build
-        uses: docker/build-push-action@dbac3ca1e5410ec04d2cce48cfbcfa3175fb8f4f
+        uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b
         with:
           context: .
           platforms: linux/amd64
