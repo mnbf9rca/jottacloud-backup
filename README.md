@@ -219,8 +219,9 @@ Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goe
 
 | Variable      | Description                                                                                     |
 | ------------- | ----------------------------------------------------------------------------------------------- |
-| `DEST_REMOTE` | Name of an rclone crypt remote (without the trailing `:`) to sync into instead of writing plaintext to `LOCAL_PATH`. See [Encryption at rest](#encryption-at-rest-optional). |
-| `RCLONE_CONFIG_<NAME>_*` | Standard rclone env-var remote definition — the recommended way to supply the crypt remote without touching the config file. |
+| `DEST_REMOTE` | Enables encryption at rest: sync writes through a crypt remote of this name instead of plaintext to `LOCAL_PATH`. See [Encryption at rest](#encryption-at-rest-optional). |
+| `DEST_REMOTE_PASSWORD` | Raw crypt passphrase (Secret). The script derives the full remote from it. |
+| `DEST_FILENAME_ENCRYPTION` | `off` (default) or `standard` — see the trade-off in the encryption section. |
 
 ## Encryption at rest (optional)
 
@@ -228,20 +229,18 @@ Set `DEST_REMOTE` and the sync writes through an rclone [crypt remote](https://r
 
 ### Configuration
 
-Five variables. Everything except the password is non-secret and goes in the **ConfigMap**; the password goes in the **Secret** (both already reach the container via `envFrom`). Do **not** add the remote to `rclone.conf` — the live Jottacloud OAuth token lives in that file and rewriting it clobbers the token.
+Two settings. The switch goes in the **ConfigMap**, the passphrase in the **Secret** (both reach the container via the existing `envFrom`). The script derives the rest itself — the crypt remote always wraps `LOCAL_PATH`, because that is the only valid configuration.
 
 | Variable | Where | Value |
 | --- | --- | --- |
-| `RCLONE_CONFIG_JOTTACRYPT_TYPE` | ConfigMap | `crypt` |
-| `RCLONE_CONFIG_JOTTACRYPT_REMOTE` | ConfigMap | same path as `LOCAL_PATH` (e.g. `/data/jotta`) |
-| `RCLONE_CONFIG_JOTTACRYPT_FILENAME_ENCRYPTION` | ConfigMap | `off` or `standard`, see below |
-| `DEST_REMOTE` | ConfigMap | `jottacrypt` (the remote name — lowercase/digits only) |
-| `RCLONE_CONFIG_JOTTACRYPT_PASSWORD` | Secret | output of `rclone obscure '<passphrase>'` |
+| `DEST_REMOTE` | ConfigMap | a remote name, e.g. `jottacrypt` (lowercase alphanumeric) |
+| `DEST_REMOTE_PASSWORD` | Secret | the raw passphrase |
 
-Filename encryption: `off` keeps real names (+`.bin`, components ≤251 bytes; contents still encrypted); `standard` encrypts names too but caps path components at 143 **bytes** — one longer name breaks every run. Check before choosing `standard`:
-`find /path/to/data | LC_ALL=C awk -F/ '{for(i=1;i<=NF;i++) if (length($i)>143) {print; next}}'`
+Optional, ConfigMap: `DEST_FILENAME_ENCRYPTION` — `off` (default: real names + `.bin` on disk, path components ≤251 bytes) or `standard` (names encrypted too, but components are capped at 143 **bytes** and one longer name breaks every run; check first with `find /path | LC_ALL=C awk -F/ '{for(i=1;i<=NF;i++) if (length($i)>143) {print; next}}'`).
 
-⚠️ The passphrase can never be lost **or rotated** — crypt cannot rekey, and either event makes the local copy and every Kopia snapshot unrecoverable. Keep it in a password manager. (`rclone obscure` output is reversible encoding, not protection.)
+⚠️ The passphrase can never be lost **or rotated** — crypt cannot rekey, and either event makes the local copy and every Kopia snapshot unrecoverable. Keep it in a password manager.
+
+Advanced: to control the remote definition yourself, define it via `rclone.conf` or `RCLONE_CONFIG_<NAME>_*` env vars and leave `DEST_REMOTE_PASSWORD` unset — the same validation applies either way. Never add it to the `rclone.conf` holding the Jottacloud token (that file is live state; rewriting it clobbers the rotating token).
 
 ### Guardrails (enforced by the script, no action needed)
 
@@ -252,7 +251,7 @@ Filename encryption: `off` keeps real names (+`.bin`, components ≤251 bytes; c
 
 ### Migrating an existing plaintext copy
 
-Encrypt in place wherever the volume is accessible (no re-download; ciphertext is path-independent). Run each block separately and check the cryptcheck exit code before deleting anything:
+Encrypt in place wherever the volume is accessible (no re-download; ciphertext is path-independent — this raw rclone invocation and the container's derived remote produce compatible ciphertext from the same passphrase). Run each block separately and check the cryptcheck exit code before deleting anything:
 
 ```bash
 mv /data/jotta /data/jotta-plain && mkdir -p /data/jotta
@@ -260,7 +259,7 @@ mv /data/jotta /data/jotta-plain && mkdir -p /data/jotta
 export RCLONE_CONFIG_JOTTACRYPT_TYPE=crypt \
        RCLONE_CONFIG_JOTTACRYPT_REMOTE=/data/jotta \
        RCLONE_CONFIG_JOTTACRYPT_FILENAME_ENCRYPTION=off \
-       RCLONE_CONFIG_JOTTACRYPT_PASSWORD='<obscured>'
+       RCLONE_CONFIG_JOTTACRYPT_PASSWORD="$(rclone obscure 'the-raw-passphrase')"
 
 rclone sync /data/jotta-plain jottacrypt: --progress
 rclone cryptcheck /data/jotta-plain jottacrypt: ; echo "cryptcheck exit: $?"

@@ -5,12 +5,15 @@ set -e
 
 # Configuration - no defaults for critical paths to prevent masking config failures
 # Required from environment: RCLONE_CONFIG_FILE, JOTTA_REMOTE, LOCAL_PATH
-# Optional: DEST_REMOTE - name of an rclone remote to sync into instead of
-# writing plaintext to LOCAL_PATH directly. Intended for a crypt remote that
-# wraps LOCAL_PATH, so data is encrypted at rest. The remote may be defined in
-# the config file or entirely via RCLONE_CONFIG_<NAME>_* env vars. LOCAL_PATH
-# is still required: it is the physical directory (kopia snapshots it, and the
-# post-sync verification counts files in it).
+# Optional (encryption at rest):
+#   DEST_REMOTE           - remote name (lowercase alphanumeric); when set,
+#                           sync writes through this crypt remote instead of
+#                           plaintext to LOCAL_PATH
+#   DEST_REMOTE_PASSWORD  - raw passphrase; the script obscures it and derives
+#                           the full crypt remote (wrapping LOCAL_PATH) itself
+#   DEST_FILENAME_ENCRYPTION - "off" (default) or "standard"
+# LOCAL_PATH stays required: it is the physical directory (kopia snapshots it,
+# and the post-sync verification counts files in it).
 RCLONE_LOG_LEVEL="${RCLONE_LOG_LEVEL:-INFO}"
 
 # Marker written to LOCAL_PATH on the first crypt-mode run. A later
@@ -58,12 +61,36 @@ fi
 # Create local directory if it doesn't exist (needed before canary validation)
 mkdir -p "$LOCAL_PATH"
 
-# Resolve sync destination: a named remote (crypt) or the plain local path.
+# Resolve sync destination: a named crypt remote or the plain local path.
 # Validation is behavioural, not config-parsing, so it works identically for
-# file-defined and env-var-defined remotes.
+# derived, file-defined and env-var-defined remotes.
 if [ -n "$DEST_REMOTE" ]; then
+    # Simple interface: with DEST_REMOTE_PASSWORD set (raw passphrase), the
+    # script derives the whole crypt remote itself - type is always crypt,
+    # the wrapped path is always LOCAL_PATH (the only valid value; enforced
+    # below regardless), filename encryption defaults to "off"
+    # (DEST_FILENAME_ENCRYPTION overrides). Nothing else to configure.
+    # Advanced: leave DEST_REMOTE_PASSWORD unset and define the remote
+    # yourself (rclone.conf or RCLONE_CONFIG_* env vars).
+    if [ -n "$DEST_REMOTE_PASSWORD" ]; then
+        case "$DEST_REMOTE" in
+            *[!a-z0-9]*)
+                log "ERROR: DEST_REMOTE '$DEST_REMOTE' must be lowercase alphanumeric (it becomes part of an env var name)"
+                exit 1
+                ;;
+        esac
+        RN=$(echo "$DEST_REMOTE" | tr '[:lower:]' '[:upper:]')
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_TYPE=crypt"
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_REMOTE=$LOCAL_PATH"
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_FILENAME_ENCRYPTION=${DEST_FILENAME_ENCRYPTION:-off}"
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_PASSWORD=$(rclone obscure "$DEST_REMOTE_PASSWORD")"
+    fi
     if ! rclone --config="$RCLONE_CONFIG_FILE" listremotes | grep -qxF "${DEST_REMOTE}:"; then
-        log "ERROR: DEST_REMOTE '$DEST_REMOTE' not found (config file or RCLONE_CONFIG_* env vars)"
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' not found (set DEST_REMOTE_PASSWORD, or define the remote in rclone.conf / RCLONE_CONFIG_* env vars)"
         exit 1
     fi
     # Type check: the 'encode' backend command exists only on crypt remotes.
