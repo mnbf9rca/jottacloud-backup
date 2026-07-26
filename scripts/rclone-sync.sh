@@ -19,6 +19,16 @@ RCLONE_LOG_LEVEL="${RCLONE_LOG_LEVEL:-INFO}"
 # re-download everything in plaintext while exiting 0.
 SENTINEL_NAME=".encrypted-by-dest-remote"
 
+# Persistent key canary: written through the crypt remote on the first crypt
+# run and required to decrypt to this exact value on every later run. This is
+# the ONLY detection for a changed password or filename_encryption mode in
+# filename_encryption=off deployments: names are not encrypted there, so
+# listing and file counts succeed under ANY key, and sync no-ops on
+# size/modtime without ever authenticating contents. The value must never
+# change across versions - existing deployments have it baked into ciphertext.
+KEY_CANARY_NAME=".crypt-key-canary"
+KEY_CANARY_VALUE="jottacloud-backup-key-canary-v1"
+
 # Function to log with timestamp
 log() {
     echo "[$(date)] [RCLONE] $1"
@@ -77,8 +87,31 @@ if [ -n "$DEST_REMOTE" ]; then
         exit 1
     fi
     rclone --config="$RCLONE_CONFIG_FILE" deletefile "$DEST_REMOTE:$CANARY_NAME" 2>/dev/null || true
-    # Latch the directory as encrypted (see SENTINEL_NAME comment above)
-    touch "$LOCAL_PATH/$SENTINEL_NAME"
+    # kopia snapshots SOURCE_PATH; the canary only proves writes land in
+    # LOCAL_PATH. If the two differ, encrypted data never reaches the backup.
+    if [ -n "$SOURCE_PATH" ] && [ "${SOURCE_PATH%/}" != "${LOCAL_PATH%/}" ]; then
+        log "ERROR: SOURCE_PATH ('$SOURCE_PATH') != LOCAL_PATH ('$LOCAL_PATH') - kopia would snapshot a different directory than the one receiving ciphertext"
+        exit 1
+    fi
+    # Key-continuity check (see KEY_CANARY_NAME comment above). The transient
+    # canary was written and checked under the CURRENT password, so it proves
+    # nothing about key continuity across runs.
+    if [ -e "$LOCAL_PATH/$SENTINEL_NAME" ]; then
+        KEY_CHECK=$(rclone --config="$RCLONE_CONFIG_FILE" cat "$DEST_REMOTE:$KEY_CANARY_NAME" 2>/dev/null || true)
+        if [ "$KEY_CHECK" != "$KEY_CANARY_VALUE" ]; then
+            log "ERROR: key canary '$KEY_CANARY_NAME' did not decrypt to the expected value"
+            log "ERROR: the crypt password or filename_encryption mode changed since this directory was encrypted"
+            log "ERROR: syncing now would mix ciphertext under two keys; restore the original password/mode"
+            exit 1
+        fi
+    else
+        # First crypt run: write the canary, then latch the directory
+        if ! printf '%s' "$KEY_CANARY_VALUE" | rclone --config="$RCLONE_CONFIG_FILE" rcat "$DEST_REMOTE:$KEY_CANARY_NAME"; then
+            log "ERROR: failed to write key canary to '$DEST_REMOTE:'"
+            exit 1
+        fi
+        touch "$LOCAL_PATH/$SENTINEL_NAME"
+    fi
     SYNC_DEST="${DEST_REMOTE}:"
 else
     if [ -e "$LOCAL_PATH/$SENTINEL_NAME" ]; then
@@ -135,6 +168,8 @@ RCLONE_LOG_FILE="$RCLONE_LOG_DIR/sync-$(date +%Y%m%d-%H%M%S).log"
 # run nothing is ever rotated, so old logs accumulate forever without this.
 find "$RCLONE_LOG_DIR" -name 'sync-*.log' -mtime +7 -delete 2>/dev/null || true
 
+# Captured via || below so the failure branch stays reachable under set -e
+RCLONE_EXIT=0
 rclone sync \
     --config="$RCLONE_CONFIG_FILE" \
     --log-level="$RCLONE_LOG_LEVEL" \
@@ -150,9 +185,8 @@ rclone sync \
     --timeout=10m \
     --contimeout=60s \
     --low-level-retries=10 \
-    "$JOTTA_REMOTE:" "$SYNC_DEST"
-
-RCLONE_EXIT=$?
+    --exclude="/$KEY_CANARY_NAME" \
+    "$JOTTA_REMOTE:" "$SYNC_DEST" || RCLONE_EXIT=$?
 
 if [ $RCLONE_EXIT -eq 0 ]; then
     log "Sync completed successfully"
@@ -175,7 +209,8 @@ if [ $RCLONE_EXIT -eq 0 ]; then
         CRYPT_COUNT=$(rclone --config="$RCLONE_CONFIG_FILE" lsf -R --files-only "$DEST_REMOTE:" | wc -l)
         if [ "$DISK_COUNT" -ne "$CRYPT_COUNT" ]; then
             log "ERROR: $DISK_COUNT files on disk under $LOCAL_PATH but $CRYPT_COUNT decryptable via '$DEST_REMOTE:'"
-            log "ERROR: difference = residual plaintext, foreign files, or ciphertext written under a different key"
+            log "ERROR: difference = residual plaintext or foreign files (key drift is caught by the key canary before sync)"
+            log "HINT: a run killed mid-transfer can leave *.partial files behind - inspect and remove them, then re-run"
             exit 1
         fi
         log "Ciphertext verification passed: $CRYPT_COUNT files, all decryptable"

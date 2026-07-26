@@ -264,9 +264,10 @@ Pick `standard` only after verifying every current and future path component fit
 
 ### What the script enforces
 
-- `DEST_REMOTE` must resolve to a **crypt** remote (checked via the crypt-only `backend encode` command), and a canary write through it must physically land inside `LOCAL_PATH` — because Kopia snapshots `LOCAL_PATH`, data landing anywhere else would silently escape the backup. (`LOCAL_PATH` stays required alongside `DEST_REMOTE`; they are complementary, not alternatives.)
-- On the first crypt run the script drops a sentinel file (`.encrypted-by-dest-remote`) in `LOCAL_PATH`. A later run **without** `DEST_REMOTE` refuses while the sentinel exists — a plaintext `rclone sync` into a ciphertext directory would otherwise delete every encrypted file and re-download the account in plaintext, exiting 0. Delete the sentinel only to deliberately decommission encryption.
-- After every crypt sync the script verifies that the number of files on disk equals the number decryptable through the remote, and fails the run otherwise. This is the only signal for residual plaintext, foreign files, or ciphertext written under a different key — crypt silently skips anything it cannot decode.
+- `DEST_REMOTE` must resolve to a **crypt** remote (checked via the crypt-only `backend encode` command), and a canary write through it must physically land inside `LOCAL_PATH` — because Kopia snapshots `LOCAL_PATH`, data landing anywhere else would silently escape the backup. (`LOCAL_PATH` stays required alongside `DEST_REMOTE`; they are complementary, not alternatives. If `SOURCE_PATH` is set and differs from `LOCAL_PATH`, the run fails for the same reason.)
+- On the first crypt run the script writes a **persistent key canary** (`.crypt-key-canary`) through the remote and drops a sentinel file (`.encrypted-by-dest-remote`) in `LOCAL_PATH`. On every later run the canary must decrypt to its known value **before any sync** — this is the only reliable detection of a changed password or `filename_encryption` mode. It matters most with `filename_encryption=off`: names are not encrypted there, so listing and file counts succeed under *any* key and a sync quietly no-ops on size/modtime; without the canary, a rotated/wrong password stays green until a restore fails. (The canary is excluded from the sync so the delete phase never removes it.)
+- A run **without** `DEST_REMOTE` refuses while the sentinel exists — a plaintext `rclone sync` into a ciphertext directory would otherwise delete every encrypted file and re-download the account in plaintext, exiting 0. Delete the sentinel only to deliberately decommission encryption.
+- After every crypt sync the script verifies that the number of files on disk equals the number decryptable through the remote, and fails the run otherwise — the signal for residual plaintext or foreign files, which crypt silently skips. (A run killed mid-transfer can leave `*.partial` files that trip this check; inspect, remove them, re-run.)
 
 ### Migrating an existing plaintext copy
 
@@ -289,7 +290,14 @@ Verify before deleting — and read the exit status yourself rather than pasting
 rclone cryptcheck /data/jotta-plain jottacrypt: ; echo "cryptcheck exit: $?"
 ```
 
-Only if that printed `exit: 0`:
+Only if that printed `exit: 0`, pre-seed the two marker files the script would otherwise create on its first run — this closes the window where a misconfigured (plaintext-mode) run could still delete the fresh ciphertext, and lets the first real run's key check work immediately:
+
+```bash
+printf 'jottacloud-backup-key-canary-v1' | rclone rcat jottacrypt:.crypt-key-canary
+touch /data/jotta/.encrypted-by-dest-remote
+```
+
+Then, as a separate deliberate step once verified:
 
 ```bash
 rm -rf /data/jotta-plain
