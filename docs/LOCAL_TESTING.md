@@ -30,6 +30,9 @@ Set environment variables:
 export RCLONE_CONFIG_FILE="$HOME/.config/rclone/rclone.conf"
 export JOTTA_REMOTE="jotta"
 export LOCAL_PATH="/tmp/jotta-backup-test"
+# Optional: encrypt at rest - the script derives the crypt remote itself
+# export DEST_REMOTE="jottacrypt"
+# export DEST_REMOTE_PASSWORD="test-passphrase"
 ```
 
 Run:

@@ -13,6 +13,12 @@ data:
   RCLONE_CONFIG_FILE: "/config/rclone.conf"
   JOTTA_REMOTE: "jotta"
   LOCAL_PATH: "/data/jotta"
+  # Optional encryption at rest (see README "Encryption at rest"). This one
+  # key is the whole switch: the script derives the crypt remote itself
+  # (always wrapping LOCAL_PATH; filename encryption "off" unless
+  # DEST_FILENAME_ENCRYPTION says otherwise). The raw passphrase arrives via
+  # the secret key DEST_REMOTE_PASSWORD. rclone.conf is never touched.
+  # DEST_REMOTE: "jottacrypt"
 
   # Kopia configuration
   KOPIA_CONFIG_FILE: "/config/kopia.config"

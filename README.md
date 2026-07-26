@@ -11,7 +11,7 @@ Automated, secure backup of Jottacloud to Backblaze B2 using rclone and Kopia in
 
 ## How It Works
 
-1. **rclone** downloads Jottacloud files to local storage
+1. **rclone** downloads Jottacloud files to local storage (optionally encrypted at rest via a crypt remote — see [Encryption at rest](#encryption-at-rest-optional))
 2. **Kopia** creates encrypted backups to Backblaze B2
 3. **CronJob** runs on schedule (default: every 6 hours)
 
@@ -72,7 +72,7 @@ S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
 
 Edit `kubernetes/cronjob.yaml` to adjust the schedule if needed (default: every 6 hours at :45 past).
 
-Create a Longhorn volume named `jottacloud-backup-config` (10Gi) via the Longhorn UI. This is used by the config PV to persist rclone and Kopia state across runs.
+The config PVC (rclone token state + Kopia cache, persisted across runs) is dynamically provisioned — set `storageClassName` in `kubernetes/persistent-volumes.yaml` to whatever RWO class your cluster provides (`local-path` shown).
 
 ### 3. Create namespace and secrets
 
@@ -213,7 +213,79 @@ kubectl delete namespace proton-backup
 | `S3_SECRET_KEY`  | Backblaze B2 application key   |
 | `KOPIA_PASSWORD` | Repository encryption password |
 
-Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`).
+Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`). Optional encryption at rest adds two variables of its own — see [Encryption at rest](#encryption-at-rest-optional).
+
+## Encryption at rest (optional)
+
+Set `DEST_REMOTE` and the sync writes through an rclone [crypt remote](https://rclone.org/crypt/) instead of straight to `LOCAL_PATH`: same directory on disk, but file contents are encrypted. Kopia backs up the ciphertext unchanged. Unset = plaintext, exactly as before.
+
+### Configuration
+
+Two settings. The switch goes in the **ConfigMap**, the passphrase in the **Secret** (both reach the container via the existing `envFrom`). The script derives the rest itself — the crypt remote always wraps `LOCAL_PATH`, because that is the only valid configuration.
+
+| Variable | Where | Value |
+| --- | --- | --- |
+| `DEST_REMOTE` | ConfigMap | a remote name, e.g. `jottacrypt` (lowercase alphanumeric) |
+| `DEST_REMOTE_PASSWORD` | Secret | the raw passphrase |
+
+Optional, ConfigMap: `DEST_FILENAME_ENCRYPTION` — `off` (default: real names + `.bin` on disk, path components ≤251 bytes) or `standard` (names encrypted too, but components are capped at 143 **bytes** and one longer name breaks every run; check first with `find /path | LC_ALL=C awk -F/ '{for(i=1;i<=NF;i++) if (length($i)>143) {print; next}}'`).
+
+⚠️ Losing the passphrase makes the local copy **and every Kopia snapshot of it** unrecoverable — keep it in a password manager. Rotating it is possible but is a re-encryption event, not a config change: see [Rotating the passphrase](#rotating-the-passphrase).
+
+Advanced: to control the remote definition yourself, define it via `rclone.conf` or `RCLONE_CONFIG_<NAME>_*` env vars and leave `DEST_REMOTE_PASSWORD` unset — the same validation applies either way. Never add it to the `rclone.conf` holding the Jottacloud token (that file is live state; rewriting it clobbers the rotating token).
+
+### Guardrails (enforced by the script, no action needed)
+
+- Refuses to sync unless `DEST_REMOTE` is a real crypt remote whose writes land inside `LOCAL_PATH` (and `SOURCE_PATH`, if set, equals `LOCAL_PATH`) — anything else would escape the Kopia backup or silently skip encryption.
+- A key canary (`.crypt-key-canary`) written on the first crypt run must decrypt to a known value before every sync — catches a changed password or filename mode while it is still harmless. (With `filename_encryption=off` nothing else can catch it: listing and counts work under any key.)
+- A sentinel (`.encrypted-by-dest-remote`) latches the directory: plaintext-mode runs refuse while it exists, because a plaintext sync into a ciphertext directory deletes everything and re-downloads in plaintext with exit 0. Delete it only to deliberately decommission encryption.
+- After each sync, files on disk must equal files decryptable through the remote — catches residual plaintext and foreign files. (A killed run can leave `*.partial` files that trip this; remove them and re-run.)
+
+### Migrating an existing plaintext copy
+
+Encrypt in place wherever the volume is accessible (no re-download; ciphertext is path-independent — this raw rclone invocation and the container's derived remote produce compatible ciphertext from the same passphrase). Run each block separately and check the cryptcheck exit code before deleting anything:
+
+```bash
+mv /data/jotta /data/jotta-plain && mkdir -p /data/jotta
+
+export RCLONE_CONFIG_JOTTACRYPT_TYPE=crypt \
+       RCLONE_CONFIG_JOTTACRYPT_REMOTE=/data/jotta \
+       RCLONE_CONFIG_JOTTACRYPT_FILENAME_ENCRYPTION=off \
+       RCLONE_CONFIG_JOTTACRYPT_PASSWORD="$(rclone obscure 'the-raw-passphrase')"
+
+rclone sync /data/jotta-plain jottacrypt: --progress
+rclone cryptcheck /data/jotta-plain jottacrypt: ; echo "cryptcheck exit: $?"
+```
+
+If (and only if) cryptcheck exited 0, pre-seed the guardrail markers, then delete the plaintext as a separate deliberate step:
+
+```bash
+printf 'jottacloud-backup-key-canary-v1' | rclone rcat jottacrypt:.crypt-key-canary
+touch /data/jotta/.encrypted-by-dest-remote
+```
+
+```bash
+rm -rf /data/jotta-plain
+```
+
+The first Kopia snapshot afterwards is a full re-upload (all-new ciphertext). Keep pre-migration snapshots until the encrypted ones have real age.
+
+### Rotating the passphrase
+
+rclone crypt cannot rekey in place, so rotation means re-encrypting everything — and the key canary will (by design) refuse to run under a changed passphrase until you do:
+
+1. Suspend the CronJob.
+2. Re-encrypt the local copy under the new passphrase: decrypt + re-encrypt locally (fast, no bandwidth), or delete the ciphertext and let the next sync re-download everything.
+3. Rewrite the key canary under the new passphrase (`printf 'jottacloud-backup-key-canary-v1' | rclone rcat <remote>:.crypt-key-canary`), update `DEST_REMOTE_PASSWORD` in the Secret, unsuspend. The next Kopia snapshot is a full re-upload.
+4. Existing Kopia snapshots stay encrypted under the **old** passphrase. Keep the old passphrase stored for as long as you want those snapshots restorable — or, if you rotated because the passphrase was compromised, purge them (`kopia snapshot delete` + maintenance): a compromised key plus retained old-key snapshots means the rotation bought you nothing for B2.
+
+### Restoring
+
+Same env vars, `REMOTE` pointed at wherever the ciphertext sits:
+
+```bash
+rclone copy jottacrypt: /path/to/restore
+```
 
 ## Monitoring
 

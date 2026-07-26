@@ -1,17 +1,23 @@
+# Data PV: static NFS volume via the NFS CSI driver
+# (https://github.com/kubernetes-csi/csi-driver-nfs), bound explicitly by
+# name with an empty storageClassName so no provisioner interferes.
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: jottacloud-backup-data-pv
 spec:
   capacity:
-    storage: 2Ti  # Adjust based on your Jottacloud storage size
+    storage: 2Ti # Adjust based on your Jottacloud storage size
   accessModes:
     - ReadWriteMany
-  nfs:
-    server: 10.10.10.1  # Replace with your NFS server
-    path: "/tank/largeappdata/jottacloud"  # Replace with your NFS path
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: retain-local-path
+  storageClassName: ""
+  csi:
+    driver: nfs.csi.k8s.io
+    volumeHandle: jottacloud-backup-data-nfs
+    volumeAttributes:
+      server: "10.10.10.1" # Replace with your NFS server
+      share: "/tank/largeappdata/jottacloud" # Replace with your NFS path
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -22,37 +28,23 @@ spec:
   volumeName: jottacloud-backup-data-pv
   accessModes:
     - ReadWriteMany
-  storageClassName: retain-local-path
+  storageClassName: ""
   resources:
     requests:
       storage: 2Ti
 ---
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: jottacloud-backup-config-pv
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: longhorn
-  csi:
-    driver: driver.longhorn.io
-    volumeHandle: jottacloud-backup-config  # Explicit Longhorn volume name
-    fsType: ext4
----
+# Config PVC: dynamically provisioned node-local storage. Persists rclone
+# token state and kopia cache across runs. Use whatever RWO storage class
+# your cluster provides (local-path shown).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: jottacloud-backup-config-pvc
   namespace: jottacloud-backup
 spec:
-  volumeName: jottacloud-backup-config-pv
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
       storage: 10Gi
-  storageClassName: longhorn
+  storageClassName: local-path

@@ -13,6 +13,13 @@ PERSISTENT_LOG_FILE="$PERSISTENT_LOG_DIR/backup.log"
 # Create logs directory and cleanup old logs
 mkdir -p "$PERSISTENT_LOG_DIR"
 
+# Rotate the previous run's log to a timestamped name; without this the
+# append-forever backup.log grows unbounded and the prune below (which only
+# matches backup-*.log) never has anything to delete
+if [ -f "$PERSISTENT_LOG_FILE" ]; then
+    mv "$PERSISTENT_LOG_FILE" "$PERSISTENT_LOG_DIR/backup-$(date +%Y%m%d-%H%M%S).log" 2>/dev/null || true
+fi
+
 # Keep only last 30 days of backup logs
 find "$PERSISTENT_LOG_DIR" -name "backup-*.log" -mtime +30 -delete 2>/dev/null || true
 START_TIME=$(date +%s)

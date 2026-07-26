@@ -5,7 +5,32 @@ set -e
 
 # Configuration - no defaults for critical paths to prevent masking config failures
 # Required from environment: RCLONE_CONFIG_FILE, JOTTA_REMOTE, LOCAL_PATH
+# Optional (encryption at rest):
+#   DEST_REMOTE           - remote name (lowercase alphanumeric); when set,
+#                           sync writes through this crypt remote instead of
+#                           plaintext to LOCAL_PATH
+#   DEST_REMOTE_PASSWORD  - raw passphrase; the script obscures it and derives
+#                           the full crypt remote (wrapping LOCAL_PATH) itself
+#   DEST_FILENAME_ENCRYPTION - "off" (default) or "standard"
+# LOCAL_PATH stays required: it is the physical directory (kopia snapshots it,
+# and the post-sync verification counts files in it).
 RCLONE_LOG_LEVEL="${RCLONE_LOG_LEVEL:-INFO}"
+
+# Marker written to LOCAL_PATH on the first crypt-mode run. A later
+# plaintext-mode run (DEST_REMOTE unset) refuses when it is present: rclone
+# sync would otherwise treat all ciphertext as extraneous, DELETE it, and
+# re-download everything in plaintext while exiting 0.
+SENTINEL_NAME=".encrypted-by-dest-remote"
+
+# Persistent key canary: written through the crypt remote on the first crypt
+# run and required to decrypt to this exact value on every later run. This is
+# the ONLY detection for a changed password or filename_encryption mode in
+# filename_encryption=off deployments: names are not encrypted there, so
+# listing and file counts succeed under ANY key, and sync no-ops on
+# size/modtime without ever authenticating contents. The value must never
+# change across versions - existing deployments have it baked into ciphertext.
+KEY_CANARY_NAME=".crypt-key-canary"
+KEY_CANARY_VALUE="jottacloud-backup-key-canary-v1"
 
 # Function to log with timestamp
 log() {
@@ -33,12 +58,102 @@ if [ ! -f "$RCLONE_CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Create local directory if it doesn't exist
+# Create local directory if it doesn't exist (needed before canary validation)
 mkdir -p "$LOCAL_PATH"
+
+# Resolve sync destination: a named crypt remote or the plain local path.
+# Validation is behavioural, not config-parsing, so it works identically for
+# derived, file-defined and env-var-defined remotes.
+if [ -n "$DEST_REMOTE" ]; then
+    # Simple interface: with DEST_REMOTE_PASSWORD set (raw passphrase), the
+    # script derives the whole crypt remote itself - type is always crypt,
+    # the wrapped path is always LOCAL_PATH (the only valid value; enforced
+    # below regardless), filename encryption defaults to "off"
+    # (DEST_FILENAME_ENCRYPTION overrides). Nothing else to configure.
+    # Advanced: leave DEST_REMOTE_PASSWORD unset and define the remote
+    # yourself (rclone.conf or RCLONE_CONFIG_* env vars).
+    if [ -n "$DEST_REMOTE_PASSWORD" ]; then
+        case "$DEST_REMOTE" in
+            *[!a-z0-9]*)
+                log "ERROR: DEST_REMOTE '$DEST_REMOTE' must be lowercase alphanumeric (it becomes part of an env var name)"
+                exit 1
+                ;;
+        esac
+        RN=$(echo "$DEST_REMOTE" | tr '[:lower:]' '[:upper:]')
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_TYPE=crypt"
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_REMOTE=$LOCAL_PATH"
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_FILENAME_ENCRYPTION=${DEST_FILENAME_ENCRYPTION:-off}"
+        # shellcheck disable=SC2163
+        export "RCLONE_CONFIG_${RN}_PASSWORD=$(rclone obscure "$DEST_REMOTE_PASSWORD")"
+    fi
+    if ! rclone --config="$RCLONE_CONFIG_FILE" listremotes | grep -qxF "${DEST_REMOTE}:"; then
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' not found (set DEST_REMOTE_PASSWORD, or define the remote in rclone.conf / RCLONE_CONFIG_* env vars)"
+        exit 1
+    fi
+    # Type check: the 'encode' backend command exists only on crypt remotes.
+    # A non-crypt remote here would silently sync PLAINTEXT while the operator
+    # believes encryption is on.
+    CANARY_NAME=".dest-remote-canary"
+    if ! ENC_CANARY=$(rclone --config="$RCLONE_CONFIG_FILE" backend encode "$DEST_REMOTE:" "$CANARY_NAME" 2>/dev/null); then
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' is not a crypt remote - refusing to sync unencrypted"
+        exit 1
+    fi
+    # Path check: a write through the remote must physically land inside
+    # LOCAL_PATH - kopia snapshots LOCAL_PATH, so data anywhere else silently
+    # escapes the backup.
+    if ! printf 'canary' | rclone --config="$RCLONE_CONFIG_FILE" rcat "$DEST_REMOTE:$CANARY_NAME"; then
+        log "ERROR: test write to '$DEST_REMOTE:' failed"
+        exit 1
+    fi
+    if [ ! -f "$LOCAL_PATH/$ENC_CANARY" ]; then
+        rclone --config="$RCLONE_CONFIG_FILE" deletefile "$DEST_REMOTE:$CANARY_NAME" 2>/dev/null || true
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' does not wrap LOCAL_PATH '$LOCAL_PATH' - synced data would escape the kopia backup"
+        exit 1
+    fi
+    rclone --config="$RCLONE_CONFIG_FILE" deletefile "$DEST_REMOTE:$CANARY_NAME" 2>/dev/null || true
+    # kopia snapshots SOURCE_PATH; the canary only proves writes land in
+    # LOCAL_PATH. If the two differ, encrypted data never reaches the backup.
+    if [ -n "$SOURCE_PATH" ] && [ "${SOURCE_PATH%/}" != "${LOCAL_PATH%/}" ]; then
+        log "ERROR: SOURCE_PATH ('$SOURCE_PATH') != LOCAL_PATH ('$LOCAL_PATH') - kopia would snapshot a different directory than the one receiving ciphertext"
+        exit 1
+    fi
+    # Key-continuity check (see KEY_CANARY_NAME comment above). The transient
+    # canary was written and checked under the CURRENT password, so it proves
+    # nothing about key continuity across runs.
+    if [ -e "$LOCAL_PATH/$SENTINEL_NAME" ]; then
+        KEY_CHECK=$(rclone --config="$RCLONE_CONFIG_FILE" cat "$DEST_REMOTE:$KEY_CANARY_NAME" 2>/dev/null || true)
+        if [ "$KEY_CHECK" != "$KEY_CANARY_VALUE" ]; then
+            log "ERROR: key canary '$KEY_CANARY_NAME' did not decrypt to the expected value"
+            log "ERROR: the crypt password or filename_encryption mode changed since this directory was encrypted"
+            log "ERROR: syncing now would mix ciphertext under two keys; restore the original password/mode"
+            exit 1
+        fi
+    else
+        # First crypt run: write the canary, then latch the directory
+        if ! printf '%s' "$KEY_CANARY_VALUE" | rclone --config="$RCLONE_CONFIG_FILE" rcat "$DEST_REMOTE:$KEY_CANARY_NAME"; then
+            log "ERROR: failed to write key canary to '$DEST_REMOTE:'"
+            exit 1
+        fi
+        touch "$LOCAL_PATH/$SENTINEL_NAME"
+    fi
+    SYNC_DEST="${DEST_REMOTE}:"
+else
+    if [ -e "$LOCAL_PATH/$SENTINEL_NAME" ]; then
+        log "ERROR: $LOCAL_PATH is marked encrypted ($SENTINEL_NAME present) but DEST_REMOTE is not set"
+        log "ERROR: a plaintext sync would DELETE the ciphertext and re-download everything in plaintext"
+        log "ERROR: set DEST_REMOTE, or delete the sentinel file to deliberately decommission encryption"
+        exit 1
+    fi
+    SYNC_DEST="$LOCAL_PATH"
+fi
 
 log "Starting Jottacloud sync..."
 log "Remote: $JOTTA_REMOTE"
 log "Local path: $LOCAL_PATH"
+log "Sync destination: $SYNC_DEST"
 log "Config file: $RCLONE_CONFIG_FILE"
 
 # Test connection first
@@ -68,18 +183,24 @@ mkdir -p "$LOCAL_PATH" || {
 
 # Perform the sync with comprehensive logging
 # Using sync instead of copy to handle deletions
-log "Starting rclone sync from $JOTTA_REMOTE: to $LOCAL_PATH"
+log "Starting rclone sync from $JOTTA_REMOTE: to $SYNC_DEST"
 
 # Create rclone logs directory
 RCLONE_LOG_DIR="/data/logs/rclone"
 mkdir -p "$RCLONE_LOG_DIR"
 RCLONE_LOG_FILE="$RCLONE_LOG_DIR/sync-$(date +%Y%m%d-%H%M%S).log"
 
+# Prune old sync logs ourselves. rclone's --log-file-max-age only manages
+# rotated copies of the single file it is writing; with a unique filename per
+# run nothing is ever rotated, so old logs accumulate forever without this.
+find "$RCLONE_LOG_DIR" -name 'sync-*.log' -mtime +7 -delete 2>/dev/null || true
+
+# Captured via || below so the failure branch stays reachable under set -e
+RCLONE_EXIT=0
 rclone sync \
     --config="$RCLONE_CONFIG_FILE" \
     --log-level="$RCLONE_LOG_LEVEL" \
     --log-file="$RCLONE_LOG_FILE" \
-    --log-file-max-age=7d \
     --stats=1m \
     --stats-one-line \
     --progress \
@@ -91,9 +212,8 @@ rclone sync \
     --timeout=10m \
     --contimeout=60s \
     --low-level-retries=10 \
-    "$JOTTA_REMOTE:" "$LOCAL_PATH"
-
-RCLONE_EXIT=$?
+    --exclude="/$KEY_CANARY_NAME" \
+    "$JOTTA_REMOTE:" "$SYNC_DEST" || RCLONE_EXIT=$?
 
 if [ $RCLONE_EXIT -eq 0 ]; then
     log "Sync completed successfully"
@@ -105,6 +225,23 @@ if [ $RCLONE_EXIT -eq 0 ]; then
     # Count files
     FILE_COUNT=$(find "$LOCAL_PATH" -type f | wc -l)
     log "Total files synced: $FILE_COUNT"
+
+    # Crypt mode: verify everything on disk is decryptable through the
+    # remote. Leftover plaintext, key-mismatched ciphertext or foreign files
+    # are invisible to crypt (it skips what it cannot decode, exit 0) while
+    # du/find above count them as if synced - so a mismatch here is the only
+    # signal that unencrypted or unrestorable data is sitting in LOCAL_PATH.
+    if [ -n "$DEST_REMOTE" ]; then
+        DISK_COUNT=$(find "$LOCAL_PATH" -type f ! -name "$SENTINEL_NAME" | wc -l)
+        CRYPT_COUNT=$(rclone --config="$RCLONE_CONFIG_FILE" lsf -R --files-only "$DEST_REMOTE:" | wc -l)
+        if [ "$DISK_COUNT" -ne "$CRYPT_COUNT" ]; then
+            log "ERROR: $DISK_COUNT files on disk under $LOCAL_PATH but $CRYPT_COUNT decryptable via '$DEST_REMOTE:'"
+            log "ERROR: difference = residual plaintext or foreign files (key drift is caught by the key canary before sync)"
+            log "HINT: a run killed mid-transfer can leave *.partial files behind - inspect and remove them, then re-run"
+            exit 1
+        fi
+        log "Ciphertext verification passed: $CRYPT_COUNT files, all decryptable"
+    fi
 
 else
     log "ERROR: Sync failed with exit code $RCLONE_EXIT"
