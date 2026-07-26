@@ -72,7 +72,7 @@ S3_BUCKET: "your-existing-kopia-bucket" # Your bucket name
 
 Edit `kubernetes/cronjob.yaml` to adjust the schedule if needed (default: every 6 hours at :45 past).
 
-Create a Longhorn volume named `jottacloud-backup-config` (10Gi) via the Longhorn UI. This is used by the config PV to persist rclone and Kopia state across runs.
+The config PVC (rclone token state + Kopia cache, persisted across runs) is dynamically provisioned — set `storageClassName` in `kubernetes/persistent-volumes.yaml` to whatever RWO class your cluster provides (`local-path` shown).
 
 ### 3. Create namespace and secrets
 
@@ -213,15 +213,7 @@ kubectl delete namespace proton-backup
 | `S3_SECRET_KEY`  | Backblaze B2 application key   |
 | `KOPIA_PASSWORD` | Repository encryption password |
 
-Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`).
-
-### Optional Environment Variables
-
-| Variable      | Description                                                                                     |
-| ------------- | ----------------------------------------------------------------------------------------------- |
-| `DEST_REMOTE` | Enables encryption at rest: sync writes through a crypt remote of this name instead of plaintext to `LOCAL_PATH`. See [Encryption at rest](#encryption-at-rest-optional). |
-| `DEST_REMOTE_PASSWORD` | Raw crypt passphrase (Secret). The script derives the full remote from it. |
-| `DEST_FILENAME_ENCRYPTION` | `off` (default) or `standard` — see the trade-off in the encryption section. |
+Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`). Optional encryption at rest adds two variables of its own — see [Encryption at rest](#encryption-at-rest-optional).
 
 ## Encryption at rest (optional)
 
@@ -238,7 +230,7 @@ Two settings. The switch goes in the **ConfigMap**, the passphrase in the **Secr
 
 Optional, ConfigMap: `DEST_FILENAME_ENCRYPTION` — `off` (default: real names + `.bin` on disk, path components ≤251 bytes) or `standard` (names encrypted too, but components are capped at 143 **bytes** and one longer name breaks every run; check first with `find /path | LC_ALL=C awk -F/ '{for(i=1;i<=NF;i++) if (length($i)>143) {print; next}}'`).
 
-⚠️ The passphrase can never be lost **or rotated** — crypt cannot rekey, and either event makes the local copy and every Kopia snapshot unrecoverable. Keep it in a password manager.
+⚠️ Losing the passphrase makes the local copy **and every Kopia snapshot of it** unrecoverable — keep it in a password manager. Rotating it is possible but is a re-encryption event, not a config change: see [Rotating the passphrase](#rotating-the-passphrase).
 
 Advanced: to control the remote definition yourself, define it via `rclone.conf` or `RCLONE_CONFIG_<NAME>_*` env vars and leave `DEST_REMOTE_PASSWORD` unset — the same validation applies either way. Never add it to the `rclone.conf` holding the Jottacloud token (that file is live state; rewriting it clobbers the rotating token).
 
@@ -277,6 +269,15 @@ rm -rf /data/jotta-plain
 ```
 
 The first Kopia snapshot afterwards is a full re-upload (all-new ciphertext). Keep pre-migration snapshots until the encrypted ones have real age.
+
+### Rotating the passphrase
+
+rclone crypt cannot rekey in place, so rotation means re-encrypting everything — and the key canary will (by design) refuse to run under a changed passphrase until you do:
+
+1. Suspend the CronJob.
+2. Re-encrypt the local copy under the new passphrase: decrypt + re-encrypt locally (fast, no bandwidth), or delete the ciphertext and let the next sync re-download everything.
+3. Rewrite the key canary under the new passphrase (`printf 'jottacloud-backup-key-canary-v1' | rclone rcat <remote>:.crypt-key-canary`), update `DEST_REMOTE_PASSWORD` in the Secret, unsuspend. The next Kopia snapshot is a full re-upload.
+4. Existing Kopia snapshots stay encrypted under the **old** passphrase. Keep the old passphrase stored for as long as you want those snapshots restorable — or, if you rotated because the passphrase was compromised, purge them (`kopia snapshot delete` + maintenance): a compromised key plus retained old-key snapshots means the rotation bought you nothing for B2.
 
 ### Restoring
 

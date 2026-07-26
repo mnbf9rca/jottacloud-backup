@@ -27,32 +27,18 @@ spec:
     requests:
       storage: 2Ti
 ---
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: jottacloud-backup-config-pv
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: longhorn
-  csi:
-    driver: driver.longhorn.io
-    volumeHandle: jottacloud-backup-config  # Explicit Longhorn volume name
-    fsType: ext4
----
+# Config PVC: dynamically provisioned node-local storage. Persists rclone
+# token state and kopia cache across runs. Use whatever RWO storage class
+# your cluster provides (local-path shown).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: jottacloud-backup-config-pvc
   namespace: jottacloud-backup
 spec:
-  volumeName: jottacloud-backup-config-pv
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
       storage: 10Gi
-  storageClassName: longhorn
+  storageClassName: local-path
