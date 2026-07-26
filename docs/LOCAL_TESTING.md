@@ -30,8 +30,13 @@ Set environment variables:
 export RCLONE_CONFIG_FILE="$HOME/.config/rclone/rclone.conf"
 export JOTTA_REMOTE="jotta"
 export LOCAL_PATH="/tmp/jotta-backup-test"
-# Optional: sync into a crypt remote wrapping LOCAL_PATH instead of plaintext
-# export DEST_REMOTE="jotta-crypt"
+# Optional: sync into a crypt remote wrapping LOCAL_PATH instead of plaintext.
+# Define the remote via env vars (no rclone.conf edit needed):
+# export RCLONE_CONFIG_JOTTACRYPT_TYPE=crypt
+# export RCLONE_CONFIG_JOTTACRYPT_REMOTE="$LOCAL_PATH"
+# export RCLONE_CONFIG_JOTTACRYPT_FILENAME_ENCRYPTION=off
+# export RCLONE_CONFIG_JOTTACRYPT_PASSWORD="$(rclone obscure 'test-passphrase')"
+# export DEST_REMOTE="jottacrypt"
 ```
 
 Run:
