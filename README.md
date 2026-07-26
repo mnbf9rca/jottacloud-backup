@@ -224,54 +224,35 @@ Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goe
 
 ## Encryption at rest (optional)
 
-By default, the synced Jottacloud files sit in plaintext on the storage backing `LOCAL_PATH`. If that storage is a physical disk you care about (theft, disposal, RMA), set `DEST_REMOTE` to the name of an rclone [crypt remote](https://rclone.org/crypt/) wrapping `LOCAL_PATH` — file contents are then encrypted on the way to disk, and Kopia backs up ciphertext.
+Set `DEST_REMOTE` and the sync writes through an rclone [crypt remote](https://rclone.org/crypt/) instead of straight to `LOCAL_PATH`: same directory on disk, but file contents are encrypted. Kopia backs up the ciphertext unchanged. Unset = plaintext, exactly as before.
 
-### 1. Define the crypt remote via environment variables (recommended)
+### Configuration
 
-Define the remote entirely with rclone's `RCLONE_CONFIG_<NAME>_*` env vars — **do not edit `rclone.conf`**. The Jottacloud OAuth token in the config file rotates on every run and only the copy on the config PVC is live; any workflow that rewrites that file risks clobbering the working token. Env-var remotes merge cleanly with the file-based `jotta` remote and keep the file untouched.
+Five variables. Everything except the password is non-secret and goes in the **ConfigMap**; the password goes in the **Secret** (both already reach the container via `envFrom`). Do **not** add the remote to `rclone.conf` — the live Jottacloud OAuth token lives in that file and rewriting it clobbers the token.
 
-In the ConfigMap:
+| Variable | Where | Value |
+| --- | --- | --- |
+| `RCLONE_CONFIG_JOTTACRYPT_TYPE` | ConfigMap | `crypt` |
+| `RCLONE_CONFIG_JOTTACRYPT_REMOTE` | ConfigMap | same path as `LOCAL_PATH` (e.g. `/data/jotta`) |
+| `RCLONE_CONFIG_JOTTACRYPT_FILENAME_ENCRYPTION` | ConfigMap | `off` or `standard`, see below |
+| `DEST_REMOTE` | ConfigMap | `jottacrypt` (the remote name — lowercase/digits only) |
+| `RCLONE_CONFIG_JOTTACRYPT_PASSWORD` | Secret | output of `rclone obscure '<passphrase>'` |
 
-```yaml
-RCLONE_CONFIG_JOTTACRYPT_TYPE: "crypt"
-RCLONE_CONFIG_JOTTACRYPT_REMOTE: "/data/jotta"        # = LOCAL_PATH
-RCLONE_CONFIG_JOTTACRYPT_FILENAME_ENCRYPTION: "off"   # see trade-off below
-DEST_REMOTE: "jottacrypt"
-```
-
-In the Secret (delivered by the existing `envFrom`):
-
-```bash
-kubectl patch secret jottacloud-backup-secrets -n jottacloud-backup -p \
-  "{\"stringData\":{\"RCLONE_CONFIG_JOTTACRYPT_PASSWORD\":\"$(rclone obscure 'your-passphrase')\"}}"
-```
-
-Notes:
-
-- The remote name must be usable in an env var: lowercase letters/digits, no hyphens.
-- The password must be the *obscured* form (`rclone obscure ...`), not the raw passphrase. Obscuring is reversible (`rclone reveal`) — it is encoding, not protection.
-- **If you lose the passphrase, the synced copy — and every Kopia snapshot of it — is unrecoverable.** Store it in a password manager, and never rotate it: rclone crypt cannot rekey, so a rotated passphrase silently strands all existing ciphertext and historical snapshots under the old key.
-
-### Filename encryption trade-off
-
-| `filename_encryption` | Names on disk | Limit |
-|---|---|---|
-| `standard` (default) | encrypted | plaintext path components ≤143 **bytes** (base32 expansion vs 255-byte NAME_MAX). One longer name makes every run fail and suppresses rclone's delete phase. |
-| `off` | real name + `.bin` | components ≤251 bytes. Contents still fully encrypted. |
-
-Pick `standard` only after verifying every current and future path component fits:
+Filename encryption: `off` keeps real names (+`.bin`, components ≤251 bytes; contents still encrypted); `standard` encrypts names too but caps path components at 143 **bytes** — one longer name breaks every run. Check before choosing `standard`:
 `find /path/to/data | LC_ALL=C awk -F/ '{for(i=1;i<=NF;i++) if (length($i)>143) {print; next}}'`
 
-### What the script enforces
+⚠️ The passphrase can never be lost **or rotated** — crypt cannot rekey, and either event makes the local copy and every Kopia snapshot unrecoverable. Keep it in a password manager. (`rclone obscure` output is reversible encoding, not protection.)
 
-- `DEST_REMOTE` must resolve to a **crypt** remote (checked via the crypt-only `backend encode` command), and a canary write through it must physically land inside `LOCAL_PATH` — because Kopia snapshots `LOCAL_PATH`, data landing anywhere else would silently escape the backup. (`LOCAL_PATH` stays required alongside `DEST_REMOTE`; they are complementary, not alternatives. If `SOURCE_PATH` is set and differs from `LOCAL_PATH`, the run fails for the same reason.)
-- On the first crypt run the script writes a **persistent key canary** (`.crypt-key-canary`) through the remote and drops a sentinel file (`.encrypted-by-dest-remote`) in `LOCAL_PATH`. On every later run the canary must decrypt to its known value **before any sync** — this is the only reliable detection of a changed password or `filename_encryption` mode. It matters most with `filename_encryption=off`: names are not encrypted there, so listing and file counts succeed under *any* key and a sync quietly no-ops on size/modtime; without the canary, a rotated/wrong password stays green until a restore fails. (The canary is excluded from the sync so the delete phase never removes it.)
-- A run **without** `DEST_REMOTE` refuses while the sentinel exists — a plaintext `rclone sync` into a ciphertext directory would otherwise delete every encrypted file and re-download the account in plaintext, exiting 0. Delete the sentinel only to deliberately decommission encryption.
-- After every crypt sync the script verifies that the number of files on disk equals the number decryptable through the remote, and fails the run otherwise — the signal for residual plaintext or foreign files, which crypt silently skips. (A run killed mid-transfer can leave `*.partial` files that trip this check; inspect, remove them, re-run.)
+### Guardrails (enforced by the script, no action needed)
+
+- Refuses to sync unless `DEST_REMOTE` is a real crypt remote whose writes land inside `LOCAL_PATH` (and `SOURCE_PATH`, if set, equals `LOCAL_PATH`) — anything else would escape the Kopia backup or silently skip encryption.
+- A key canary (`.crypt-key-canary`) written on the first crypt run must decrypt to a known value before every sync — catches a changed password or filename mode while it is still harmless. (With `filename_encryption=off` nothing else can catch it: listing and counts work under any key.)
+- A sentinel (`.encrypted-by-dest-remote`) latches the directory: plaintext-mode runs refuse while it exists, because a plaintext sync into a ciphertext directory deletes everything and re-downloads in plaintext with exit 0. Delete it only to deliberately decommission encryption.
+- After each sync, files on disk must equal files decryptable through the remote — catches residual plaintext and foreign files. (A killed run can leave `*.partial` files that trip this; remove them and re-run.)
 
 ### Migrating an existing plaintext copy
 
-To avoid re-downloading everything from Jottacloud, encrypt the existing local copy in place before enabling `DEST_REMOTE` (run wherever the data volume is directly accessible; the crypt remote is path-independent — same passphrase reads the ciphertext through any wrapped path):
+Encrypt in place wherever the volume is accessible (no re-download; ciphertext is path-independent). Run each block separately and check the cryptcheck exit code before deleting anything:
 
 ```bash
 mv /data/jotta /data/jotta-plain && mkdir -p /data/jotta
@@ -282,32 +263,25 @@ export RCLONE_CONFIG_JOTTACRYPT_TYPE=crypt \
        RCLONE_CONFIG_JOTTACRYPT_PASSWORD='<obscured>'
 
 rclone sync /data/jotta-plain jottacrypt: --progress
-```
-
-Verify before deleting — and read the exit status yourself rather than pasting one big block:
-
-```bash
 rclone cryptcheck /data/jotta-plain jottacrypt: ; echo "cryptcheck exit: $?"
 ```
 
-Only if that printed `exit: 0`, pre-seed the two marker files the script would otherwise create on its first run — this closes the window where a misconfigured (plaintext-mode) run could still delete the fresh ciphertext, and lets the first real run's key check work immediately:
+If (and only if) cryptcheck exited 0, pre-seed the guardrail markers, then delete the plaintext as a separate deliberate step:
 
 ```bash
 printf 'jottacloud-backup-key-canary-v1' | rclone rcat jottacrypt:.crypt-key-canary
 touch /data/jotta/.encrypted-by-dest-remote
 ```
 
-Then, as a separate deliberate step once verified:
-
 ```bash
 rm -rf /data/jotta-plain
 ```
 
-The next Kopia snapshot after migration re-uploads everything (every file is new ciphertext), so expect a one-time full upload to B2. Keep pre-migration snapshots until the encrypted ones have real age — they are your reach-back-in-time safety net.
+The first Kopia snapshot afterwards is a full re-upload (all-new ciphertext). Keep pre-migration snapshots until the encrypted ones have real age.
 
-### Restoring encrypted data
+### Restoring
 
-Ciphertext restored from Kopia (or read straight off the disk) is decrypted with the same crypt remote definition (env vars as above, `REMOTE` pointing at wherever the ciphertext sits):
+Same env vars, `REMOTE` pointed at wherever the ciphertext sits:
 
 ```bash
 rclone copy jottacrypt: /path/to/restore
