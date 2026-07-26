@@ -238,7 +238,7 @@ password = <output of: rclone obscure 'your-passphrase'>
 
 Notes:
 
-- `remote` is the path **inside the container**, i.e. `LOCAL_PATH`.
+- `remote` is the path **inside the container**, i.e. `LOCAL_PATH`. The script enforces this: it errors out unless `DEST_REMOTE` is a crypt remote whose `remote` equals `LOCAL_PATH`, because Kopia snapshots `LOCAL_PATH` — data landing anywhere else would silently escape the backup. (`LOCAL_PATH` is therefore still required alongside `DEST_REMOTE`; they are complementary, not alternatives.)
 - `password` must be the *obscured* form (`rclone obscure ...`), not the raw passphrase.
 - `password2` (salt) is optional; omitting it keeps the pipeline down to a single passphrase to safeguard.
 - **If you lose the passphrase, the synced copy — and any Kopia snapshots of it — are unrecoverable.** Store it in a password manager.

@@ -43,6 +43,19 @@ if [ -n "$DEST_REMOTE" ]; then
         log "ERROR: DEST_REMOTE '$DEST_REMOTE' not found in rclone config"
         exit 1
     fi
+    # DEST_REMOTE must be a crypt remote wrapping LOCAL_PATH: kopia snapshots
+    # LOCAL_PATH (via SOURCE_PATH), so data landing anywhere else would
+    # silently escape the backup
+    REMOTE_TYPE=$(rclone --config="$RCLONE_CONFIG_FILE" config show "$DEST_REMOTE" | sed -n 's/^type = //p')
+    WRAPPED_PATH=$(rclone --config="$RCLONE_CONFIG_FILE" config show "$DEST_REMOTE" | sed -n 's/^remote = //p')
+    if [ "$REMOTE_TYPE" != "crypt" ]; then
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' has type '$REMOTE_TYPE', expected 'crypt'"
+        exit 1
+    fi
+    if [ "${WRAPPED_PATH%/}" != "${LOCAL_PATH%/}" ]; then
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' wraps '$WRAPPED_PATH' but LOCAL_PATH is '$LOCAL_PATH' - synced data would escape the kopia backup"
+        exit 1
+    fi
     SYNC_DEST="${DEST_REMOTE}:"
 else
     SYNC_DEST="$LOCAL_PATH"
