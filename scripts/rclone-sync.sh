@@ -5,6 +5,10 @@ set -e
 
 # Configuration - no defaults for critical paths to prevent masking config failures
 # Required from environment: RCLONE_CONFIG_FILE, JOTTA_REMOTE, LOCAL_PATH
+# Optional: DEST_REMOTE - name of an rclone remote to sync into instead of
+# writing plaintext to LOCAL_PATH directly. Intended for a crypt remote that
+# wraps LOCAL_PATH, so data is encrypted at rest. LOCAL_PATH is still required:
+# it is the underlying directory used for mkdir and post-sync statistics.
 RCLONE_LOG_LEVEL="${RCLONE_LOG_LEVEL:-INFO}"
 
 # Function to log with timestamp
@@ -33,12 +37,24 @@ if [ ! -f "$RCLONE_CONFIG_FILE" ]; then
     exit 1
 fi
 
+# Resolve sync destination: a named remote (e.g. crypt) or the plain local path
+if [ -n "$DEST_REMOTE" ]; then
+    if ! rclone --config="$RCLONE_CONFIG_FILE" listremotes | grep -qx "${DEST_REMOTE}:"; then
+        log "ERROR: DEST_REMOTE '$DEST_REMOTE' not found in rclone config"
+        exit 1
+    fi
+    SYNC_DEST="${DEST_REMOTE}:"
+else
+    SYNC_DEST="$LOCAL_PATH"
+fi
+
 # Create local directory if it doesn't exist
 mkdir -p "$LOCAL_PATH"
 
 log "Starting Jottacloud sync..."
 log "Remote: $JOTTA_REMOTE"
 log "Local path: $LOCAL_PATH"
+log "Sync destination: $SYNC_DEST"
 log "Config file: $RCLONE_CONFIG_FILE"
 
 # Test connection first
@@ -68,7 +84,7 @@ mkdir -p "$LOCAL_PATH" || {
 
 # Perform the sync with comprehensive logging
 # Using sync instead of copy to handle deletions
-log "Starting rclone sync from $JOTTA_REMOTE: to $LOCAL_PATH"
+log "Starting rclone sync from $JOTTA_REMOTE: to $SYNC_DEST"
 
 # Create rclone logs directory
 RCLONE_LOG_DIR="/data/logs/rclone"
@@ -91,7 +107,7 @@ rclone sync \
     --timeout=10m \
     --contimeout=60s \
     --low-level-retries=10 \
-    "$JOTTA_REMOTE:" "$LOCAL_PATH"
+    "$JOTTA_REMOTE:" "$SYNC_DEST"
 
 RCLONE_EXIT=$?
 

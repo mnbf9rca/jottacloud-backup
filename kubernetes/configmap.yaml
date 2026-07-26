@@ -13,6 +13,9 @@ data:
   RCLONE_CONFIG_FILE: "/config/rclone.conf"
   JOTTA_REMOTE: "jotta"
   LOCAL_PATH: "/data/jotta"
+  # Optional: name of an rclone crypt remote wrapping LOCAL_PATH.
+  # When set, synced data is encrypted at rest (see README "Encryption at rest").
+  # DEST_REMOTE: "jotta-crypt"
 
   # Kopia configuration
   KOPIA_CONFIG_FILE: "/config/kopia.config"

@@ -11,7 +11,7 @@ Automated, secure backup of Jottacloud to Backblaze B2 using rclone and Kopia in
 
 ## How It Works
 
-1. **rclone** downloads Jottacloud files to local storage
+1. **rclone** downloads Jottacloud files to local storage (optionally encrypted at rest via a crypt remote — see [Encryption at rest](#encryption-at-rest-optional))
 2. **Kopia** creates encrypted backups to Backblaze B2
 3. **CronJob** runs on schedule (default: every 6 hours)
 
@@ -214,6 +214,69 @@ kubectl delete namespace proton-backup
 | `KOPIA_PASSWORD` | Repository encryption password |
 
 Non-sensitive config like `HEALTHCHECK_UUID`, `S3_ENDPOINT`, and `S3_BUCKET` goes in the ConfigMap (`kubernetes/configmap.yaml`).
+
+### Optional Environment Variables
+
+| Variable      | Description                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `DEST_REMOTE` | Name of an rclone remote (without the trailing `:`) to sync into instead of writing plaintext to `LOCAL_PATH`. Intended for a crypt remote wrapping `LOCAL_PATH`. |
+
+## Encryption at rest (optional)
+
+By default, the synced Jottacloud files sit in plaintext on the storage backing `LOCAL_PATH`. If that storage is a physical disk you care about (theft, disposal, RMA), you can have rclone encrypt everything it writes — file contents **and** file names — by layering a [crypt remote](https://rclone.org/crypt/) over `LOCAL_PATH`.
+
+### 1. Add a crypt remote to your rclone config
+
+Append to the same `rclone.conf` that holds the `jotta` remote:
+
+```ini
+[jotta-crypt]
+type = crypt
+remote = /data/jotta
+password = <output of: rclone obscure 'your-passphrase'>
+```
+
+Notes:
+
+- `remote` is the path **inside the container**, i.e. `LOCAL_PATH`.
+- `password` must be the *obscured* form (`rclone obscure ...`), not the raw passphrase.
+- `password2` (salt) is optional; omitting it keeps the pipeline down to a single passphrase to safeguard.
+- **If you lose the passphrase, the synced copy — and any Kopia snapshots of it — are unrecoverable.** Store it in a password manager.
+
+### 2. Set `DEST_REMOTE` in the ConfigMap
+
+```yaml
+DEST_REMOTE: "jotta-crypt"
+```
+
+The sync then runs `rclone sync jotta: jotta-crypt:` and ciphertext lands under `LOCAL_PATH`. Kopia is unaffected — it snapshots `SOURCE_PATH` as usual and simply backs up ciphertext. Deduplication still works because rclone only rewrites files that changed.
+
+### Migrating an existing plaintext copy
+
+To avoid re-downloading everything from Jottacloud, encrypt the existing local copy in place before enabling the schedule (run inside a container/pod with the data volume and rclone config mounted):
+
+```bash
+# Move the plaintext aside (instant on the same filesystem)
+mv /data/jotta /data/jotta-plain
+mkdir -p /data/jotta
+
+# Encrypt locally - no internet bandwidth used
+rclone sync --config=/config/rclone.conf /data/jotta-plain jotta-crypt: --progress
+
+# Verify, then remove the plaintext
+rclone cryptcheck --config=/config/rclone.conf /data/jotta-plain jotta-crypt:
+rm -rf /data/jotta-plain
+```
+
+The next Kopia snapshot after migration re-uploads everything (every file has new encrypted names/content), so expect a one-time full upload to B2. Consider pruning pre-migration snapshots once the new ones are verified.
+
+### Restoring encrypted data
+
+Ciphertext restored from Kopia (or read straight off the disk) is decrypted with the same crypt remote definition:
+
+```bash
+rclone copy jotta-crypt: /path/to/restore --config=/path/to/rclone.conf
+```
 
 ## Monitoring
 
