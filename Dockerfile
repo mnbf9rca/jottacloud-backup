@@ -1,6 +1,6 @@
 # Multi-stage build for secure Jottacloud backup container
 # Stage 1: Download and verify binaries
-FROM alpine:3.24.2 AS builder
+FROM alpine:3.24.3 AS builder
 
 # Define versions for reproducible builds (checksums fetched dynamically)
 ARG RCLONE_VERSION=1.75.2
@@ -82,7 +82,7 @@ RUN ARCH=$(uname -m) && \
     rm -rf kopia-*
 
 # Stage 2: Runtime image
-FROM alpine:3.24.2
+FROM alpine:3.24.3
 
 # Install only essential runtime dependencies
 RUN apk add --no-cache \
